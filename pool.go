@@ -79,3 +79,13 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 func (p *Pool) ID() string {
 	return p.id
 }
+
+// Acquire acquires a resource from the pool.
+func (p *Pool) Acquire(ctx context.Context) (*Resource, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+// release releases a resource back to the pool.
+func (p *Pool) release(ctx context.Context, r *Resource) error {
+	return fmt.Errorf("not implemented")
+}
