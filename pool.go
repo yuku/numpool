@@ -72,7 +72,10 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 		}
 	}
 
-	return &Pool{id: conf.ID, conn: conf.Conn}, nil
+	return &Pool{
+		id:   conf.ID,
+		conn: conf.Conn,
+	}, nil
 }
 
 // ID returns the unique identifier of the pool.
@@ -82,10 +85,66 @@ func (p *Pool) ID() string {
 
 // Acquire acquires a resource from the pool.
 func (p *Pool) Acquire(ctx context.Context) (*Resource, error) {
-	return nil, fmt.Errorf("not implemented")
+	var resource *Resource
+
+	err := pgx.BeginFunc(ctx, p.conn, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+
+		// Get the pool with lock
+		numpool, err := q.GetNumpoolForUpdate(ctx, p.id)
+		if err != nil {
+			return fmt.Errorf("failed to get numpool for update: %w", err)
+		}
+
+		// Find the first unused resource
+		index := numpool.FindUnusedResourceIndex()
+		if index == -1 {
+			return fmt.Errorf("no resources available")
+		}
+
+		// Try to acquire this resource
+		affected, err := q.AcquireResource(ctx, sqlc.AcquireResourceParams{
+			ID:            p.id,
+			ResourceIndex: index,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to acquire resource: %w", err)
+		}
+
+		if affected == 0 {
+			// This shouldn't happen with proper locking
+			return fmt.Errorf("resource at index %d was already in use", index)
+		}
+
+		resource = &Resource{
+			pool:  p,
+			index: index,
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resource, nil
 }
 
 // release releases a resource back to the pool.
 func (p *Pool) release(ctx context.Context, r *Resource) error {
-	return fmt.Errorf("not implemented")
+	q := sqlc.New(p.conn)
+
+	affected, err := q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
+		ID:            p.id,
+		ResourceIndex: r.index,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to release resource: %w", err)
+	}
+
+	if affected == 0 {
+		return fmt.Errorf("resource was not in use")
+	}
+
+	return nil
 }

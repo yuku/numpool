@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool"
 	"github.com/yuku/numpool/internal"
+	"github.com/yuku/numpool/internal/sqlc"
 )
 
 // TestSequentialResourceAcquisition tests acquiring resources sequentially
@@ -16,6 +17,10 @@ func TestSequentialResourceAcquisition(t *testing.T) {
 	ctx := context.Background()
 	poolID := fmt.Sprintf("test_pool_%s", t.Name())
 	conn := internal.MustGetConnectionWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	queries := sqlc.New(conn)
+	_ = queries.DeleteNumpool(ctx, poolID)
 
 	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
 		Conn:              conn,
