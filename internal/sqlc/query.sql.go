@@ -11,9 +11,9 @@ import (
 
 const acquireResource = `-- name: AcquireResource :execrows
 UPDATE numpool
-SET resource_usage_status = resource_usage_status | (1::BIT(64) << $2)
+SET resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - $2))
 WHERE id = $1
-  AND (resource_usage_status & (1::BIT(64) << $2)) = 0::BIT(64)
+  AND (resource_usage_status & (1::BIT(64) << (63 - $2))) = 0::BIT(64)
 `
 
 type AcquireResourceParams struct {
@@ -108,26 +108,11 @@ func (q *Queries) GetNumpoolForUpdate(ctx context.Context, id string) (Numpool, 
 	return i, err
 }
 
-const notifyNextClient = `-- name: NotifyNextClient :exec
-SELECT PG_NOTIFY($1, $2)
-`
-
-type NotifyNextClientParams struct {
-	Channel  string
-	ClientID string
-}
-
-// NotifyNextClient sends the id of the next client waiting for the numpool to the specified channel.
-func (q *Queries) NotifyNextClient(ctx context.Context, arg NotifyNextClientParams) error {
-	_, err := q.db.Exec(ctx, notifyNextClient, arg.Channel, arg.ClientID)
-	return err
-}
-
 const releaseResource = `-- name: ReleaseResource :execrows
 UPDATE numpool
-SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << $2)
+SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << (63 - $2))
 WHERE id = $1
-	AND (resource_usage_status & (1::BIT(64) << $2)) <> 0::BIT(64)
+	AND (resource_usage_status & (1::BIT(64) << (63 - $2))) <> 0::BIT(64)
 `
 
 type ReleaseResourceParams struct {

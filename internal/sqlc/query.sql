@@ -28,13 +28,13 @@ DELETE FROM numpool WHERE id = $1;
 -- AcquireResource attempts to acquire a resource from the numpool.
 -- It returns the id of the numpool if successful, or NULL if no resources are available.
 UPDATE numpool
-SET resource_usage_status = resource_usage_status | (1::BIT(64) << @resource_index)
+SET resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - @resource_index))
 WHERE id = $1
-  AND (resource_usage_status & (1::BIT(64) << @resource_index)) = 0::BIT(64);
+  AND (resource_usage_status & (1::BIT(64) << (63 - @resource_index))) = 0::BIT(64);
 
 -- name: ReleaseResource :execrows
 -- ReleaseResource releases a resource back to the numpool.
 UPDATE numpool
-SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << @resource_index)
+SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << (63 - @resource_index))
 WHERE id = $1
-	AND (resource_usage_status & (1::BIT(64) << @resource_index)) <> 0::BIT(64);
+	AND (resource_usage_status & (1::BIT(64) << (63 - @resource_index))) <> 0::BIT(64);

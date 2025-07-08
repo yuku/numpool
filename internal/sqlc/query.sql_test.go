@@ -97,8 +97,8 @@ func TestAcquireResource(t *testing.T) {
 	// Then check the resource usage status
 	row, err = q.GetNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to get numpool after acquiring resource")
-	require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 1}, row.ResourceUsageStatus.Bytes,
-		"resource usage status should have the first bit set after acquiring resource",
+	require.Equal(t, []byte{0x80, 0, 0, 0, 0, 0, 0, 0}, row.ResourceUsageStatus.Bytes,
+		"resource usage status should have the first bit set after acquiring resource (big-endian)",
 	)
 
 	// When trying to acquire the same resource again
@@ -114,7 +114,7 @@ func TestAcquireResource(t *testing.T) {
 	// Check that the resource usage status is unchanged
 	row, err = q.GetNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to get numpool after trying to acquire resource again")
-	require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 1}, row.ResourceUsageStatus.Bytes,
+	require.Equal(t, []byte{0x80, 0, 0, 0, 0, 0, 0, 0}, row.ResourceUsageStatus.Bytes,
 		"resource usage status should remain unchanged after trying to acquire already acquired resource",
 	)
 
@@ -129,7 +129,7 @@ func TestAcquireResource(t *testing.T) {
 	// Then check the resource usage status again
 	row, err = q.GetNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to get numpool after acquiring another resource")
-	expectedStatus := []byte{0, 0, 0, 0, 0, 0, 0, 1 | (1 << 3)}
+	expectedStatus := []byte{0x80 | 0x10, 0, 0, 0, 0, 0, 0, 0} // bits 0 and 3 set in big-endian
 	require.Equal(t, expectedStatus, row.ResourceUsageStatus.Bytes,
 		"resource usage status should have the first and fourth bits set after acquiring another resource",
 	)
@@ -165,8 +165,8 @@ func TestReleaseResource(t *testing.T) {
 	// Verify resources are acquired
 	row, err := q.GetNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to get numpool")
-	require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 1 | (1 << 3)}, row.ResourceUsageStatus.Bytes,
-		"resources 0 and 3 should be acquired")
+	require.Equal(t, []byte{0x80 | 0x10, 0, 0, 0, 0, 0, 0, 0}, row.ResourceUsageStatus.Bytes,
+		"resources 0 and 3 should be acquired (big-endian)")
 
 	// When releasing resource 0
 	rowsAffected, err := q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
@@ -179,8 +179,8 @@ func TestReleaseResource(t *testing.T) {
 	// Then verify resource 0 is released
 	row, err = q.GetNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to get numpool after releasing resource")
-	require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 1 << 3}, row.ResourceUsageStatus.Bytes,
-		"only resource 3 should be acquired after releasing resource 0")
+	require.Equal(t, []byte{0x10, 0, 0, 0, 0, 0, 0, 0}, row.ResourceUsageStatus.Bytes,
+		"only resource 3 should be acquired after releasing resource 0 (big-endian)")
 
 	// When releasing resource 3
 	rowsAffected, err = q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
