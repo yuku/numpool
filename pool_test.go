@@ -14,16 +14,21 @@ import (
 func TestCreateOrOpen(t *testing.T) {
 	ctx := context.Background()
 	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	conn := internal.MustGetConnectionWithCleanup(t)
-	q := sqlc.New(conn)
+	dbPool := internal.MustGetPoolWithCleanup(t)
+	
+	// Get a connection for sqlc queries
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	defer conn.Release()
+	q := sqlc.New(conn.Conn())
 
 	// Check if the pool already exists
-	_, err := q.GetNumpool(ctx, poolID)
+	_, err = q.GetNumpool(ctx, poolID)
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 
 	// Create a new pool
 	pool, err := CreateOrOpen(ctx, Config{
-		Conn:              conn,
+		Pool:              dbPool,
 		ID:                poolID,
 		MaxResourcesCount: 8,
 	})
@@ -39,7 +44,7 @@ func TestCreateOrOpen(t *testing.T) {
 
 	// Open the same pool again
 	pool2, err := CreateOrOpen(ctx, Config{
-		Conn:              conn,
+		Pool:              dbPool,
 		ID:                poolID,
 		MaxResourcesCount: 8,
 	})
@@ -49,7 +54,7 @@ func TestCreateOrOpen(t *testing.T) {
 
 	// Open the pool with a different MaxResourcesCount
 	_, err = CreateOrOpen(ctx, Config{
-		Conn:              conn,
+		Pool:              dbPool,
 		ID:                poolID,
 		MaxResourcesCount: 16,
 	})

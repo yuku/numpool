@@ -6,17 +6,18 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuku/numpool/internal/sqlc"
 )
 
 // Pool represents a pool of resources that can be acquired and released.
 type Pool struct {
 	id   string
-	conn *pgx.Conn
+	pool *pgxpool.Pool
 }
 
 type Config struct {
-	Conn              *pgx.Conn
+	Pool              *pgxpool.Pool
 	ID                string
 	MaxResourcesCount int32
 }
@@ -26,8 +27,8 @@ const (
 )
 
 func (c Config) Validate() error {
-	if c.Conn == nil {
-		return fmt.Errorf("connection cannot be nil")
+	if c.Pool == nil {
+		return fmt.Errorf("pool cannot be nil")
 	}
 	if c.ID == "" {
 		return fmt.Errorf("pool ID cannot be empty")
@@ -49,7 +50,13 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 	}
 
 	// Check if the pool already exists
-	q := sqlc.New(conf.Conn)
+	conn, err := conf.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire connection from pool: %w", err)
+	}
+	defer conn.Release()
+
+	q := sqlc.New(conn.Conn())
 
 	row, err := q.GetNumpool(ctx, conf.ID)
 	if err != nil {
@@ -74,7 +81,7 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 
 	return &Pool{
 		id:   conf.ID,
-		conn: conf.Conn,
+		pool: conf.Pool,
 	}, nil
 }
 
@@ -87,7 +94,7 @@ func (p *Pool) ID() string {
 func (p *Pool) Acquire(ctx context.Context) (*Resource, error) {
 	var resource *Resource
 
-	err := pgx.BeginFunc(ctx, p.conn, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 
 		// Get the pool with lock
@@ -132,7 +139,13 @@ func (p *Pool) Acquire(ctx context.Context) (*Resource, error) {
 
 // release releases a resource back to the pool.
 func (p *Pool) release(ctx context.Context, r *Resource) error {
-	q := sqlc.New(p.conn)
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection from pool: %w", err)
+	}
+	defer conn.Release()
+
+	q := sqlc.New(conn.Conn())
 
 	affected, err := q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
 		ID:            p.id,

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // GetConnection returns a connection to the PostgreSQL database.
@@ -39,6 +40,22 @@ func MustGetConnectionWithCleanup(t *testing.T) *pgx.Conn {
 	conn := MustGetConnection(ctx)
 	t.Cleanup(func() { _ = conn.Close(ctx) })
 	return conn
+}
+
+// MustGetPoolWithCleanup returns a connection pool to the PostgreSQL database
+// and automatically cleans it up when the test completes.
+func MustGetPoolWithCleanup(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, getConnString())
+	if err != nil {
+		t.Fatalf("failed to create connection pool: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("failed to ping database: %v", err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	return pool
 }
 
 func getConnString() string {
