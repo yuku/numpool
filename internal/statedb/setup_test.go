@@ -2,9 +2,11 @@ package statedb_test
 
 import (
 	"context"
-	"os"
+	"fmt"
+	"math/rand/v2"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool/internal"
 	"github.com/yuku/numpool/internal/sqlc"
@@ -14,31 +16,39 @@ import (
 func TestSetup(t *testing.T) {
 	defaultConn := internal.MustGetConnectionWithCleanup(t)
 
-	// Create separete database to avoid dropping the table affecting other tests.
-	_, err := defaultConn.Exec(context.Background(), "CREATE DATABASE setup_test")
+	ctx := context.Background()
+	dbname := fmt.Sprintf("numpool_test_%d", rand.IntN(1000000)) // Randomize database name to avoid conflicts
+
+	// Create separate database to avoid dropping the table affecting other tests.
+	_, err := defaultConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbname))
 	require.NoError(t, err, "failed to create setup_test database")
 	t.Cleanup(func() {
-		_, _ = defaultConn.Exec(context.Background(), "DROP DATABASE IF EXISTS setup_test")
+		_, _ = defaultConn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbname))
 	})
-	os.Setenv("PGDATABASE", "setup_test")
-	conn := internal.MustGetConnectionWithCleanup(t)
+	
+	// Connect to the new database directly
+	config := defaultConn.Config().Copy()
+	config.Database = dbname
+	conn, err := pgx.ConnectConfig(ctx, config)
+	require.NoError(t, err, "failed to connect to test database")
+	t.Cleanup(func() { _ = conn.Close(ctx) })
 
 	// Given
 	q := sqlc.New(conn)
-	exists, err := q.DoesNumpoolTableExist(context.Background())
+	exists, err := q.DoesNumpoolTableExist(ctx)
 	require.NoError(t, err, "failed to check if numpool table exists")
 	if exists {
 		// If the table already exists, we can drop it to ensure a clean setup.
-		_, err = conn.Exec(context.Background(), "DROP TABLE IF EXISTS numpool")
+		_, err = conn.Exec(ctx, "DROP TABLE IF EXISTS numpool")
 		require.NoError(t, err, "failed to drop numpool table before setup")
 		exists = false // Reset exists to false since we just dropped the table
 	}
 
 	// When
-	require.NoError(t, statedb.Setup(context.Background(), conn))
+	require.NoError(t, statedb.Setup(ctx, conn))
 
 	// Then
-	exists, err = q.DoesNumpoolTableExist(context.Background())
+	exists, err = q.DoesNumpoolTableExist(ctx)
 	require.NoError(t, err, "failed to check if numpool table exists after setup")
 	require.True(t, exists, "numpool table should exist after setup")
 }
