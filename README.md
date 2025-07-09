@@ -19,7 +19,11 @@ Key features:
 ## Installation
 
 ```bash
+# Library
 go get github.com/yuku/numpool
+
+# CLI tool
+go install github.com/yuku/numpool/cmd/numpool@latest
 ```
 
 ## Quick Start
@@ -164,6 +168,36 @@ err := resource.Release(ctx)
 
 // Release without error handling (for defer)
 resource.Close()
+```
+
+## CLI Tool
+
+numpool includes a CLI tool for database management tasks.
+
+### Installation
+
+```bash
+# Install the CLI tool
+go install github.com/yuku/numpool/cmd/numpool@latest
+```
+
+### Commands
+
+- `numpool setup` - Initialize the database schema
+
+### Environment Variables
+
+The CLI respects standard PostgreSQL environment variables:
+
+```bash
+# Using DATABASE_URL (highest priority)
+DATABASE_URL=postgres://user:pass@host:5432/db numpool setup
+
+# Using individual variables
+PGHOST=db.example.com PGUSER=myuser PGPASSWORD=mypass numpool setup
+
+# Using defaults (connects to localhost:5432 as postgres user)
+numpool setup
 ```
 
 ## Testing
