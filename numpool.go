@@ -6,6 +6,20 @@
 // to ensure safe concurrent access and efficient resource allocation across multiple
 // application instances.
 //
+// Setup:
+//
+// Before using numpool, you need to set up the required database table:
+//
+//	conn, err := pgx.Connect(ctx, databaseURL)
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	defer conn.Close(ctx)
+//
+//	if err := numpool.Setup(ctx, conn); err != nil {
+//		log.Fatal(err)
+//	}
+//
 // Basic usage:
 //
 //	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
@@ -31,7 +45,9 @@ package numpool
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/yuku/numpool/internal/numpool"
+	"github.com/yuku/numpool/internal/statedb"
 )
 
 // Pool represents a pool of resources that can be acquired and released.
@@ -50,4 +66,11 @@ type Config = numpool.Config
 // MaxResourcesCount, it returns an error.
 func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 	return numpool.CreateOrOpen(ctx, conf)
+}
+
+// Setup initializes the numpool table in the database.
+// This function should be called once before using any pools.
+// It is safe to call multiple times as it will not recreate existing tables.
+func Setup(ctx context.Context, conn *pgx.Conn) error {
+	return statedb.Setup(ctx, conn)
 }
