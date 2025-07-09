@@ -32,7 +32,9 @@ type Config struct {
 }
 
 const (
-	maxResourcesCount = 64 // Maximum number of resources in the pool
+	// MaxResourcesLimit is the maximum number of resources that can be in a pool.
+	// This limit is due to the bit representation used for tracking resource usage.
+	MaxResourcesLimit = 64
 )
 
 func (c Config) Validate() error {
@@ -42,9 +44,9 @@ func (c Config) Validate() error {
 	if c.ID == "" {
 		return fmt.Errorf("pool ID cannot be empty")
 	}
-	if c.MaxResourcesCount <= 0 || maxResourcesCount < c.MaxResourcesCount {
+	if c.MaxResourcesCount <= 0 || MaxResourcesLimit < c.MaxResourcesCount {
 		return fmt.Errorf("max resources count must be between 1 and %d: given %d",
-			maxResourcesCount, c.MaxResourcesCount,
+			MaxResourcesLimit, c.MaxResourcesCount,
 		)
 	}
 	return nil
