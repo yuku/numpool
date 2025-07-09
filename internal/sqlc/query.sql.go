@@ -7,6 +7,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const acquireResource = `-- name: AcquireResource :execrows
@@ -68,15 +70,15 @@ UPDATE numpool
 SET wait_queue = wait_queue[2:]
 FROM first_client
 WHERE numpool.id = $1 AND cardinality(wait_queue) > 0
-RETURNING first_client.client_id
+RETURNING first_client.client_id::UUID
 `
 
 // DequeueWaitingClient removes and returns the first client from the wait queue.
-func (q *Queries) DequeueWaitingClient(ctx context.Context, id string) (interface{}, error) {
+func (q *Queries) DequeueWaitingClient(ctx context.Context, id string) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, dequeueWaitingClient, id)
-	var client_id interface{}
-	err := row.Scan(&client_id)
-	return client_id, err
+	var first_client_client_id pgtype.UUID
+	err := row.Scan(&first_client_client_id)
+	return first_client_client_id, err
 }
 
 const doesNumpoolTableExist = `-- name: DoesNumpoolTableExist :one

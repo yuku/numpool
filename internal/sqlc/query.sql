@@ -57,7 +57,7 @@ UPDATE numpool
 SET wait_queue = wait_queue[2:]
 FROM first_client
 WHERE numpool.id = $1 AND cardinality(wait_queue) > 0
-RETURNING first_client.client_id;
+RETURNING first_client.client_id::UUID;
 
 -- name: RemoveFromWaitQueue :exec
 -- RemoveFromWaitQueue removes a specific client UUID from the wait queue.

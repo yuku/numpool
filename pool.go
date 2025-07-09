@@ -159,7 +159,7 @@ func (p *Pool) release(ctx context.Context, r *Resource) error {
 		}
 
 		// Check if there are waiting clients
-		clientIDRaw, err := q.DequeueWaitingClient(ctx, p.id)
+		clientID, err := q.DequeueWaitingClient(ctx, p.id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				// No waiting clients
@@ -168,17 +168,8 @@ func (p *Pool) release(ctx context.Context, r *Resource) error {
 			return fmt.Errorf("failed to dequeue waiting client: %w", err)
 		}
 
-		// Convert the raw UUID to string
-		var clientIDStr string
-		switch v := clientIDRaw.(type) {
-		case [16]byte:
-			clientID := uuid.UUID(v)
-			clientIDStr = clientID.String()
-		case string:
-			clientIDStr = v
-		default:
-			return fmt.Errorf("unexpected client ID type: %T", clientIDRaw)
-		}
+		// Convert pgtype.UUID to string for notification
+		clientIDStr := uuid.UUID(clientID.Bytes).String()
 
 		// Notify the waiting client
 		channelName := fmt.Sprintf("np_%s", p.id)
