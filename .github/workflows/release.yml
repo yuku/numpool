@@ -1,0 +1,21 @@
+name: Update pkg.go.dev documentation
+on:
+  release:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request proxy.golang.org cache
+        run: |
+          curl -X POST https://proxy.golang.org/github.com/yuku/numpool/@v/${{ github.event.release.tag_name }}.info
+      - name: Request pkg.go.dev documentation update
+        run: |
+          curl -X POST https://pkg.go.dev/fetch/github.com/yuku/numpool@${{ github.event.release.tag_name }}
