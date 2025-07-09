@@ -1200,12 +1200,16 @@ func TestStressTest(t *testing.T) {
 					default:
 						// Random operation
 						switch id % 3 {
-						case 0: // Normal acquire/release
-							resource, err := pool.Acquire(ctx)
+						case 0: // Normal acquire/release with timeout
+							timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+							resource, err := pool.Acquire(timeoutCtx)
+							cancel()
 							if err == nil {
 								atomic.AddInt64(&successCount, 1)
 								time.Sleep(time.Duration(id%10) * time.Millisecond)
 								resource.Release(ctx)
+							} else {
+								atomic.AddInt64(&timeoutCount, 1)
 							}
 
 						case 1: // Acquire with timeout
