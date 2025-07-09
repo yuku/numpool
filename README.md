@@ -26,7 +26,28 @@ go get github.com/yuku/numpool
 
 ### 1. Set up the database
 
-First, initialize the required database table:
+First, initialize the required database table. You can do this either via CLI or programmatically:
+
+#### Via CLI:
+
+```bash
+# Using go run
+go run github.com/yuku/numpool/cmd/numpool setup
+
+# Or install the binary first
+go install github.com/yuku/numpool/cmd/numpool@latest
+numpool setup
+```
+
+The CLI respects standard PostgreSQL environment variables:
+- `DATABASE_URL`: Full connection string
+- `PGHOST`: Database host (default: localhost)
+- `PGPORT`: Database port (default: 5432)
+- `PGUSER`: Database user (default: postgres)
+- `PGPASSWORD`: Database password
+- `PGDATABASE`: Database name (default: postgres)
+
+#### Programmatically:
 
 ```go
 import (
