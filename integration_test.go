@@ -136,13 +136,13 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 	go func() {
 		resource1, err1 = pool.Acquire(ctx)
 		close(firstAcquired)
-		
+
 		// Wait for second goroutine to be blocked on acquire
 		<-secondBlocked
-		
+
 		// Add a small delay to ensure second is truly blocked
 		time.Sleep(50 * time.Millisecond)
-		
+
 		// Release after ensuring second is waiting
 		err := resource1.Release(ctx)
 		if err != nil {
@@ -155,14 +155,14 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 	go func() {
 		// Ensure first goroutine acquires first
 		<-firstAcquired
-		
+
 		// Start a goroutine to signal when we're about to block
 		go func() {
 			// Small delay to ensure we're in the Acquire call
 			time.Sleep(10 * time.Millisecond)
 			close(secondBlocked)
 		}()
-		
+
 		// This should block until first releases
 		resource2, err2 = pool.Acquire(ctx)
 		close(secondAcquired)
@@ -179,4 +179,88 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 	require.NotNil(t, resource2, "second acquired resource should not be nil")
 	require.Equal(t, 0, resource1.Index(), "first acquired resource should have index 0")
 	require.Equal(t, 0, resource2.Index(), "second acquired resource should have index 0 (reused after release)")
+}
+
+// TestMultiplePoolInstancesWithSameID tests that multiple pool instances
+// with the same ID can work together correctly, sharing the same underlying
+// resources and wait queue.
+func TestMultiplePoolInstancesWithSameID(t *testing.T) {
+	ctx := context.Background()
+	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	dbPool := internal.MustGetPoolWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	queries := sqlc.New(conn.Conn())
+	_ = queries.DeleteNumpool(ctx, poolID)
+	conn.Release()
+
+	// Create first pool instance
+	pool1, err := numpool.CreateOrOpen(ctx, numpool.Config{
+		Pool:              dbPool,
+		ID:                poolID,
+		MaxResourcesCount: 2,
+	})
+	require.NoError(t, err, "failed to create first pool instance")
+
+	// Create second pool instance with the same ID
+	pool2, err := numpool.CreateOrOpen(ctx, numpool.Config{
+		Pool:              dbPool,
+		ID:                poolID,
+		MaxResourcesCount: 2,
+	})
+	require.NoError(t, err, "failed to create second pool instance")
+
+	// Acquire resource from pool1
+	resource1, err := pool1.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire resource from pool1")
+	require.NotNil(t, resource1, "resource from pool1 should not be nil")
+	require.Equal(t, 0, resource1.Index(), "resource from pool1 should have index 0")
+
+	// Acquire resource from pool2 - should get different resource
+	resource2, err := pool2.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire resource from pool2")
+	require.NotNil(t, resource2, "resource from pool2 should not be nil")
+	require.Equal(t, 1, resource2.Index(), "resource from pool2 should have index 1")
+
+	// Try to acquire third resource from pool1 - should block
+	acquireStarted := make(chan struct{})
+	acquireCompleted := make(chan struct{})
+	var resource3 *numpool.Resource
+	var err3 error
+
+	go func() {
+		close(acquireStarted)
+		resource3, err3 = pool1.Acquire(ctx)
+		close(acquireCompleted)
+	}()
+
+	// Wait for acquire to start
+	<-acquireStarted
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify that acquire is still blocked
+	select {
+	case <-acquireCompleted:
+		t.Fatal("acquire should be blocked")
+	default:
+		// Expected - acquire is blocked
+	}
+
+	// Release resource from pool2
+	err = resource2.Release(ctx)
+	require.NoError(t, err, "failed to release resource from pool2")
+
+	// Now pool1 should be able to acquire the released resource
+	<-acquireCompleted
+	require.NoError(t, err3, "failed to acquire resource from pool1 after release")
+	require.NotNil(t, resource3, "resource from pool1 after release should not be nil")
+	require.Equal(t, 1, resource3.Index(), "resource from pool1 after release should have index 1")
+
+	// Cleanup
+	err = resource1.Release(ctx)
+	require.NoError(t, err, "failed to release resource1")
+	err = resource3.Release(ctx)
+	require.NoError(t, err, "failed to release resource3")
 }
