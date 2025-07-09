@@ -83,17 +83,19 @@ func TestParallelResourceAcquisition(t *testing.T) {
 	errs := make(chan error, 2)
 
 	go func() {
-		resource0, err = pool.Acquire(ctx)
-		errs <- err
+		var err0 error
+		resource0, err0 = pool.Acquire(ctx)
+		errs <- err0
 	}()
 
 	go func() {
-		resource1, err = pool.Acquire(ctx)
-		errs <- err
+		var err1 error
+		resource1, err1 = pool.Acquire(ctx)
+		errs <- err1
 	}()
 
 	for range 2 {
-		err = <-errs
+		err := <-errs
 		require.NoError(t, err, "failed to acquire resource in parallel")
 	}
 
