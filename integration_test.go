@@ -3,6 +3,7 @@ package numpool_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -357,4 +358,134 @@ func TestResourceCloseMethod(t *testing.T) {
 	require.NotPanics(t, func() {
 		resource2.Close()
 	}, "Close() should be idempotent and not panic on multiple calls")
+}
+
+// TestMultipleConcurrentAcquires tests that multiple goroutines can acquire
+// resources concurrently and that all waiting goroutines eventually get resources.
+func TestMultipleConcurrentAcquires(t *testing.T) {
+	ctx := context.Background()
+	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	dbPool := internal.MustGetPoolWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	queries := sqlc.New(conn.Conn())
+	_ = queries.DeleteNumpool(ctx, poolID)
+	conn.Release()
+
+	const maxResources = 2
+	const numGoroutines = 10
+
+	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
+		Pool:              dbPool,
+		ID:                poolID,
+		MaxResourcesCount: maxResources,
+	})
+	require.NoError(t, err, "failed to create pool")
+
+	// Use a wait group to track all goroutines
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Track resources and errors for each goroutine
+	resources := make([]*numpool.Resource, numGoroutines)
+	errors := make([]error, numGoroutines)
+
+	// Channel to coordinate resource holding time
+	holdResource := make(chan int, numGoroutines)
+	releaseResource := make(chan int, numGoroutines)
+
+	// Start goroutines that will compete for resources
+	for i := range numGoroutines {
+		go func(id int) {
+			defer wg.Done()
+
+			// Try to acquire a resource
+			resources[id], errors[id] = pool.Acquire(ctx)
+			if errors[id] != nil {
+				return
+			}
+
+			// Signal that we're holding a resource
+			holdResource <- id
+
+			// Wait for signal to release
+			<-releaseResource
+
+			// Release the resource
+			err := resources[id].Release(ctx)
+			if err != nil {
+				t.Logf("goroutine %d failed to release: %v", id, err)
+			}
+		}(i)
+	}
+
+	// First maxResources goroutines should acquire immediately
+	acquired := make([]int, 0, maxResources)
+	for range maxResources {
+		select {
+		case id := <-holdResource:
+			acquired = append(acquired, id)
+			t.Logf("goroutine %d acquired resource (batch 1)", id)
+		case <-time.After(1 * time.Second):
+			t.Fatal("first batch should acquire immediately")
+		}
+	}
+
+	// Verify no more have acquired yet
+	select {
+	case id := <-holdResource:
+		t.Fatalf("goroutine %d should not have acquired yet", id)
+	case <-time.After(100 * time.Millisecond):
+		// Good, no more acquired
+	}
+
+	// Release first resource and wait for next acquisition
+	releaseResource <- acquired[0]
+	select {
+	case id := <-holdResource:
+		t.Logf("goroutine %d acquired resource (batch 2)", id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting goroutine should acquire after release")
+	}
+
+	// Release second resource and wait for next acquisition
+	releaseResource <- acquired[1]
+	select {
+	case id := <-holdResource:
+		t.Logf("goroutine %d acquired resource (batch 3)", id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting goroutine should acquire after release")
+	}
+
+	// Now we should have exactly one more waiting
+	// Release remaining resources to let last goroutine acquire
+	for i := range 2 {
+		releaseResource <- i // dummy value, goroutines just need the signal
+	}
+
+	// Wait for the last one
+	select {
+	case id := <-holdResource:
+		t.Logf("goroutine %d acquired resource (final)", id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("last goroutine should acquire")
+	}
+
+	// Signal all remaining goroutines to release
+	close(releaseResource)
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// Verify all succeeded
+	successCount := 0
+	for i := range numGoroutines {
+		if errors[i] == nil {
+			successCount++
+			require.NotNil(t, resources[i], "goroutine %d should have acquired a resource", i)
+		}
+	}
+	require.Equal(t, numGoroutines, successCount, "all goroutines should have acquired eventually")
 }
