@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool"
@@ -124,7 +125,7 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 
 	// Channel to synchronize goroutines
 	firstAcquired := make(chan struct{})
-	secondTryingToAcquire := make(chan struct{})
+	secondBlocked := make(chan struct{})
 	firstReleased := make(chan struct{})
 	secondAcquired := make(chan struct{})
 
@@ -136,8 +137,11 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 		resource1, err1 = pool.Acquire(ctx)
 		close(firstAcquired)
 		
-		// Wait for second goroutine to attempt acquire
-		<-secondTryingToAcquire
+		// Wait for second goroutine to be blocked on acquire
+		<-secondBlocked
+		
+		// Add a small delay to ensure second is truly blocked
+		time.Sleep(50 * time.Millisecond)
 		
 		// Release after ensuring second is waiting
 		err := resource1.Release(ctx)
@@ -152,8 +156,12 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 		// Ensure first goroutine acquires first
 		<-firstAcquired
 		
-		// Signal that we're about to try acquiring
-		close(secondTryingToAcquire)
+		// Start a goroutine to signal when we're about to block
+		go func() {
+			// Small delay to ensure we're in the Acquire call
+			time.Sleep(10 * time.Millisecond)
+			close(secondBlocked)
+		}()
 		
 		// This should block until first releases
 		resource2, err2 = pool.Acquire(ctx)
