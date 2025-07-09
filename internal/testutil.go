@@ -95,27 +95,13 @@ func getEnvOrDefault(key, defaultValue string) string {
 var setupOnce sync.Once
 
 // SetupTestDatabase ensures the database schema is set up for tests.
-// It uses PostgreSQL advisory locks to prevent concurrent setup attempts
-// and sync.Once to ensure it runs only once per process.
+// It uses sync.Once to ensure it runs only once per process.
 func SetupTestDatabase() {
 	setupOnce.Do(func() {
 		ctx := context.Background()
 		conn := MustGetConnection(ctx)
 		defer func() {
 			_ = conn.Close(ctx)
-		}()
-
-		// Use advisory lock to prevent concurrent schema creation
-		// Lock ID 12345 is arbitrary but must be consistent across all test processes
-		const lockID int64 = 12345
-		
-		// Try to acquire exclusive advisory lock
-		_, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID)
-		if err != nil {
-			panic(fmt.Sprintf("failed to acquire advisory lock: %v", err))
-		}
-		defer func() {
-			_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
 		}()
 
 		if err := statedb.Setup(ctx, conn); err != nil {
