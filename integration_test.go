@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -488,4 +489,125 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 		}
 	}
 	require.Equal(t, numGoroutines, successCount, "all goroutines should have acquired eventually")
+}
+
+// TestMultiplePoolInstancesConcurrentAcquires tests that multiple pool instances
+// with the same ID correctly share resources and handle concurrent acquisitions.
+func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
+	ctx := context.Background()
+	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	dbPool := internal.MustGetPoolWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	queries := sqlc.New(conn.Conn())
+	_ = queries.DeleteNumpool(ctx, poolID)
+	conn.Release()
+
+	const maxResources = 3
+	const numPools = 4
+
+	// Create multiple pool instances with the same ID
+	pools := make([]*numpool.Pool, numPools)
+	for i := 0; i < numPools; i++ {
+		pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
+			Pool:              dbPool,
+			ID:                poolID,
+			MaxResourcesCount: maxResources,
+		})
+		require.NoError(t, err, "failed to create pool %d", i)
+		pools[i] = pool
+	}
+
+	// Test 1: Verify pools share the same resources
+	// Acquire all resources using different pool instances
+	resources := make([]*numpool.Resource, maxResources)
+	for i := 0; i < maxResources; i++ {
+		poolIdx := i % numPools // Use different pools
+		resources[i], err = pools[poolIdx].Acquire(ctx)
+		require.NoError(t, err, "failed to acquire resource %d from pool %d", i, poolIdx)
+		require.NotNil(t, resources[i], "resource %d should not be nil", i)
+		t.Logf("Acquired resource %d from pool %d", resources[i].Index(), poolIdx)
+	}
+
+	// Try to acquire one more - should block
+	done := make(chan struct{})
+	var blockedResource *numpool.Resource
+	var blockedErr error
+	
+	go func() {
+		// Use a different pool instance
+		blockedResource, blockedErr = pools[numPools-1].Acquire(ctx)
+		close(done)
+	}()
+
+	// Should not complete immediately
+	select {
+	case <-done:
+		t.Fatal("acquisition should have blocked")
+	case <-time.After(100 * time.Millisecond):
+		// Good, it's blocking
+	}
+
+	// Release one resource from a different pool
+	err = resources[0].Release(ctx)
+	require.NoError(t, err, "failed to release resource")
+
+	// Now the blocked acquisition should complete
+	select {
+	case <-done:
+		require.NoError(t, blockedErr, "blocked acquisition should succeed")
+		require.NotNil(t, blockedResource, "blocked acquisition should return a resource")
+		t.Logf("Blocked goroutine acquired resource %d", blockedResource.Index())
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked acquisition should complete after release")
+	}
+
+	// Clean up
+	for _, res := range resources[1:] {
+		if res != nil {
+			res.Release(ctx)
+		}
+	}
+	if blockedResource != nil {
+		blockedResource.Release(ctx)
+	}
+
+	// Test 2: Concurrent acquisitions from multiple pools
+	var wg sync.WaitGroup
+	successCount := int32(0)
+	totalAttempts := numPools * 2 // 2 attempts per pool
+
+	wg.Add(totalAttempts)
+	for poolIdx := 0; poolIdx < numPools; poolIdx++ {
+		for attempt := 0; attempt < 2; attempt++ {
+			go func(pool *numpool.Pool, poolIdx, attempt int) {
+				defer wg.Done()
+				
+				// Try to acquire with a timeout
+				acquireCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+				
+				resource, err := pool.Acquire(acquireCtx)
+				if err == nil && resource != nil {
+					atomic.AddInt32(&successCount, 1)
+					t.Logf("Pool %d attempt %d: acquired resource %d", poolIdx, attempt, resource.Index())
+					// Hold briefly then release
+					time.Sleep(50 * time.Millisecond)
+					resource.Release(ctx)
+				} else {
+					t.Logf("Pool %d attempt %d: failed to acquire (expected for some)", poolIdx, attempt)
+				}
+			}(pools[poolIdx], poolIdx, attempt)
+		}
+	}
+
+	wg.Wait()
+	
+	// At least maxResources acquisitions should have succeeded
+	finalCount := atomic.LoadInt32(&successCount)
+	require.GreaterOrEqual(t, finalCount, int32(maxResources), 
+		"at least %d acquisitions should succeed", maxResources)
+	t.Logf("Total successful acquisitions: %d out of %d attempts", finalCount, totalAttempts)
 }
