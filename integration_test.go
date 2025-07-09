@@ -264,3 +264,95 @@ func TestMultiplePoolInstancesWithSameID(t *testing.T) {
 	err = resource3.Release(ctx)
 	require.NoError(t, err, "failed to release resource3")
 }
+
+// TestIdempotentRelease tests that Release can be called multiple times safely.
+func TestIdempotentRelease(t *testing.T) {
+	ctx := context.Background()
+	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	dbPool := internal.MustGetPoolWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	queries := sqlc.New(conn.Conn())
+	_ = queries.DeleteNumpool(ctx, poolID)
+	conn.Release()
+
+	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
+		Pool:              dbPool,
+		ID:                poolID,
+		MaxResourcesCount: 1,
+	})
+	require.NoError(t, err, "failed to create pool")
+
+	// Acquire a resource
+	resource, err := pool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire resource")
+	require.NotNil(t, resource, "acquired resource should not be nil")
+
+	// First release should succeed
+	err = resource.Release(ctx)
+	require.NoError(t, err, "first release should succeed")
+
+	// Second release should also succeed (no-op)
+	err = resource.Release(ctx)
+	require.NoError(t, err, "second release should succeed (no-op)")
+
+	// Third release should also succeed (no-op)
+	err = resource.Release(ctx)
+	require.NoError(t, err, "third release should succeed (no-op)")
+
+	// Verify that the resource is actually available for re-acquisition
+	resource2, err := pool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire resource after release")
+	require.NotNil(t, resource2, "re-acquired resource should not be nil")
+	require.Equal(t, 0, resource2.Index(), "re-acquired resource should have same index")
+
+	// Clean up
+	err = resource2.Release(ctx)
+	require.NoError(t, err, "failed to release resource2")
+}
+
+// TestResourceCloseMethod tests that Close() method works correctly.
+func TestResourceCloseMethod(t *testing.T) {
+	ctx := context.Background()
+	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	dbPool := internal.MustGetPoolWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	queries := sqlc.New(conn.Conn())
+	_ = queries.DeleteNumpool(ctx, poolID)
+	conn.Release()
+
+	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
+		Pool:              dbPool,
+		ID:                poolID,
+		MaxResourcesCount: 1,
+	})
+	require.NoError(t, err, "failed to create pool")
+
+	// Test pattern: acquire and use Close() with defer
+	func() {
+		resource, err := pool.Acquire(ctx)
+		require.NoError(t, err, "failed to acquire resource")
+		require.NotNil(t, resource, "acquired resource should not be nil")
+		defer resource.Close() // Simple defer pattern
+		
+		// Use resource...
+		require.Equal(t, 0, resource.Index())
+	}()
+
+	// Verify resource was released and can be re-acquired
+	resource2, err := pool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire resource after Close()")
+	require.NotNil(t, resource2, "re-acquired resource should not be nil")
+	require.Equal(t, 0, resource2.Index(), "re-acquired resource should have same index")
+
+	// Test that Close() is idempotent
+	resource2.Close()
+	require.NotPanics(t, func() {
+		resource2.Close()
+	}, "Close() should be idempotent and not panic on multiple calls")
+}
