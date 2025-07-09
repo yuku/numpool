@@ -41,7 +41,6 @@ func TestSetup(t *testing.T) {
 		// If the table already exists, we can drop it to ensure a clean setup.
 		_, err = conn.Exec(ctx, "DROP TABLE IF EXISTS numpool")
 		require.NoError(t, err, "failed to drop numpool table before setup")
-		exists = false // Reset exists to false since we just dropped the table
 	}
 
 	// When

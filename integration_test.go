@@ -341,7 +341,7 @@ func TestResourceCloseMethod(t *testing.T) {
 		require.NoError(t, err, "failed to acquire resource")
 		require.NotNil(t, resource, "acquired resource should not be nil")
 		defer resource.Close() // Simple defer pattern
-		
+
 		// Use resource...
 		require.Equal(t, 0, resource.Index())
 	}()

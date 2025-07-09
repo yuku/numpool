@@ -20,7 +20,7 @@ type Pool struct {
 	pool     *pgxpool.Pool
 	listener *pgxlisten.Listener
 	mu       sync.Mutex
-	
+
 	// notifyHandlers maps client IDs to notification channels
 	notifyHandlers map[string]chan struct{}
 }
@@ -95,22 +95,32 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 			return pgx.ConnectConfig(ctx, config)
 		},
 	}
-	
+
 	pool := &Pool{
 		id:             conf.ID,
 		pool:           conf.Pool,
 		listener:       listener,
 		notifyHandlers: make(map[string]chan struct{}),
 	}
-	
+
 	// Set up notification handler
 	// PostgreSQL channel names have a limit, so we use a shorter format
 	channelName := fmt.Sprintf("np_%s", conf.ID)
 	listener.Handle(channelName, pgxlisten.HandlerFunc(pool.handleNotification))
-	
+
 	// Start listening in background
-	go listener.Listen(context.Background())
-	
+	go func() {
+		if err := listener.Listen(context.Background()); err != nil {
+			// LISTEN/NOTIFY is critical for the current implementation.
+			// Without it, clients will block indefinitely waiting for resources.
+			//
+			// TODO: Implement polling as a fallback mechanism if LISTEN/NOTIFY fails.
+			// This would involve periodically checking for available resources
+			// instead of waiting for notifications.
+			panic(fmt.Sprintf("numpool: listener failed: %v", err))
+		}
+	}()
+
 	return pool, nil
 }
 
@@ -139,7 +149,6 @@ func (p *Pool) unregisterClient(clientID string) {
 	delete(p.notifyHandlers, clientID)
 	p.mu.Unlock()
 }
-
 
 // release releases a resource back to the pool.
 func (p *Pool) release(ctx context.Context, r *Resource) error {
