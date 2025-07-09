@@ -16,7 +16,7 @@ import (
 func GetConnection(ctx context.Context) (*pgx.Conn, error) {
 	conn, err := pgx.Connect(ctx, getConnString())
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database")
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 	if err := conn.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
@@ -29,7 +29,7 @@ func GetConnection(ctx context.Context) (*pgx.Conn, error) {
 func MustGetConnection(ctx context.Context) *pgx.Conn {
 	conn, err := GetConnection(ctx)
 	if err != nil {
-		panic(fmt.Sprintf("failed to get database connection: %v", err))
+		panic(err)
 	}
 	return conn
 }
