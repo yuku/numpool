@@ -23,5 +23,5 @@ type Numpool struct {
 	// For example, if MaxResourcesCount is 8, then ResourceUsageStatus can be a value from 0 to 64, where each bit represents the usage of a resource.
 	ResourceUsageStatus pgtype.Bits
 	// WaitQueue is a list of client ids waiting for the numpool.
-	WaitQueue []string
+	WaitQueue []pgtype.UUID
 }
