@@ -3,7 +3,6 @@ package sqlc_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -11,23 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool/internal"
 	"github.com/yuku/numpool/internal/sqlc"
-	"github.com/yuku/numpool/internal/statedb"
 )
-
-func TestMain(m *testing.M) {
-	ctx := context.Background()
-
-	// Setup the database connection and schema before running tests
-	conn := internal.MustGetConnection(ctx)
-	defer func() {
-		_ = conn.Close(ctx)
-	}()
-
-	if err := statedb.Setup(ctx, conn); err != nil {
-		panic(err)
-	}
-	os.Exit(m.Run())
-}
 
 func TestCreateDeleteNumpool(t *testing.T) {
 	ctx := context.Background()
@@ -288,7 +271,7 @@ func TestEnqueueDequeueWaitingClient(t *testing.T) {
 	// Dequeue the first client
 	dequeuedClientID, err := q.DequeueWaitingClient(ctx, poolID)
 	require.NoError(t, err, "failed to dequeue first client")
-	
+
 	// Verify the dequeued client ID matches the first client
 	require.Equal(t, clientID1.Bytes, dequeuedClientID.Bytes, "dequeued client should be the first client")
 

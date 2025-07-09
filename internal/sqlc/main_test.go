@@ -1,4 +1,4 @@
-package numpool
+package sqlc_test
 
 import (
 	"os"
