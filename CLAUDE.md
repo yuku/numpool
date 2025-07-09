@@ -4,6 +4,7 @@
 
 - Run tests: `go test -v ./...`
 - Run formatter: `go fmt ./...`
+- Run linter: `golangci-lint run`
 - Generate SQL queries: `make`
 
 ## Development Principles
