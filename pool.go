@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgxlisten"
 	"github.com/yuku/numpool/internal/sqlc"
@@ -121,138 +120,26 @@ func (p *Pool) ID() string {
 }
 
 // Acquire acquires a resource from the pool.
+// Deprecated: Use NewClient(pool).Acquire(ctx) instead.
 func (p *Pool) Acquire(ctx context.Context) (*Resource, error) {
-	for {
-		// Try to acquire a resource
-		resource, err := p.tryAcquire(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if resource != nil {
-			return resource, nil
-		}
-
-		// No resources available, wait for one
-		clientID := uuid.New()
-		notifyChan := make(chan struct{}, 1)
-
-		// Register the notification handler
-		p.mu.Lock()
-		p.notifyHandlers[clientID.String()] = notifyChan
-		p.mu.Unlock()
-
-		// Add to wait queue
-		err = p.enqueueClient(ctx, clientID)
-		if err != nil {
-			p.mu.Lock()
-			delete(p.notifyHandlers, clientID.String())
-			p.mu.Unlock()
-			return nil, fmt.Errorf("failed to enqueue client: %w", err)
-		}
-
-		// Wait for notification or context cancellation
-		select {
-		case <-notifyChan:
-			// Notification received, clean up and try again
-			p.mu.Lock()
-			delete(p.notifyHandlers, clientID.String())
-			p.mu.Unlock()
-			continue
-		case <-ctx.Done():
-			// Context cancelled, clean up
-			p.mu.Lock()
-			delete(p.notifyHandlers, clientID.String())
-			p.mu.Unlock()
-			
-			// Remove from wait queue
-			_ = p.removeFromWaitQueue(context.Background(), clientID)
-			
-			return nil, ctx.Err()
-		}
-	}
+	client := NewClient(p)
+	return client.Acquire(ctx)
 }
 
-// tryAcquire attempts to acquire a resource without blocking
-func (p *Pool) tryAcquire(ctx context.Context) (*Resource, error) {
-	var resource *Resource
-
-	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
-		q := sqlc.New(tx)
-
-		// Get the pool with lock
-		numpool, err := q.GetNumpoolForUpdate(ctx, p.id)
-		if err != nil {
-			return fmt.Errorf("failed to get numpool for update: %w", err)
-		}
-
-		// Find the first unused resource
-		index := numpool.FindUnusedResourceIndex()
-		if index == -1 {
-			// No resources available
-			return nil
-		}
-
-		// Try to acquire this resource
-		affected, err := q.AcquireResource(ctx, sqlc.AcquireResourceParams{
-			ID:            p.id,
-			ResourceIndex: index,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to acquire resource: %w", err)
-		}
-
-		if affected == 0 {
-			// This shouldn't happen with proper locking
-			return fmt.Errorf("resource at index %d was already in use", index)
-		}
-
-		resource = &Resource{
-			pool:  p,
-			index: index,
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return resource, nil
+// registerClient registers a client's notification channel.
+func (p *Pool) registerClient(clientID string, ch chan struct{}) {
+	p.mu.Lock()
+	p.notifyHandlers[clientID] = ch
+	p.mu.Unlock()
 }
 
-// enqueueClient adds a client to the wait queue
-func (p *Pool) enqueueClient(ctx context.Context, clientID uuid.UUID) error {
-	conn, err := p.pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to acquire connection: %w", err)
-	}
-	defer conn.Release()
-
-	q := sqlc.New(conn.Conn())
-	pgUUID := pgtype.UUID{Valid: true}
-	copy(pgUUID.Bytes[:], clientID[:])
-	return q.EnqueueWaitingClient(ctx, sqlc.EnqueueWaitingClientParams{
-		ID:       p.id,
-		ClientID: pgUUID,
-	})
+// unregisterClient removes a client's notification channel.
+func (p *Pool) unregisterClient(clientID string) {
+	p.mu.Lock()
+	delete(p.notifyHandlers, clientID)
+	p.mu.Unlock()
 }
 
-// removeFromWaitQueue removes a client from the wait queue
-func (p *Pool) removeFromWaitQueue(ctx context.Context, clientID uuid.UUID) error {
-	conn, err := p.pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to acquire connection: %w", err)
-	}
-	defer conn.Release()
-
-	q := sqlc.New(conn.Conn())
-	pgUUID := pgtype.UUID{Valid: true}
-	copy(pgUUID.Bytes[:], clientID[:])
-	return q.RemoveFromWaitQueue(ctx, sqlc.RemoveFromWaitQueueParams{
-		ID:       p.id,
-		ClientID: pgUUID,
-	})
-}
 
 // release releases a resource back to the pool.
 func (p *Pool) release(ctx context.Context, r *Resource) error {
