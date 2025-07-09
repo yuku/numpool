@@ -78,7 +78,22 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 			MaxResourcesCount: conf.MaxResourcesCount,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create numpool: %w", err)
+			// Check if it's a duplicate key error (concurrent creation)
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				// Another process created the pool, fetch it
+				row, err = q.GetNumpool(ctx, conf.ID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get numpool after concurrent creation: %w", err)
+				}
+				if row.MaxResourcesCount != conf.MaxResourcesCount {
+					return nil, fmt.Errorf("pool %s already exists with different max resources count: %d, expected: %d",
+						conf.ID, row.MaxResourcesCount, conf.MaxResourcesCount,
+					)
+				}
+			} else {
+				return nil, fmt.Errorf("failed to create numpool: %w", err)
+			}
 		}
 	} else {
 		if row.MaxResourcesCount != conf.MaxResourcesCount {
