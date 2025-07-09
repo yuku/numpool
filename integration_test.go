@@ -567,11 +567,11 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	// Clean up
 	for _, res := range resources[1:] {
 		if res != nil {
-			res.Release(ctx)
+			res.Close()
 		}
 	}
 	if blockedResource != nil {
-		blockedResource.Release(ctx)
+		blockedResource.Close()
 	}
 
 	// Test 2: Concurrent acquisitions from multiple pools
@@ -595,7 +595,7 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 					t.Logf("Pool %d attempt %d: acquired resource %d", poolIdx, attempt, resource.Index())
 					// Hold briefly then release
 					time.Sleep(50 * time.Millisecond)
-					resource.Release(ctx)
+					resource.Close()
 				} else {
 					t.Logf("Pool %d attempt %d: failed to acquire (expected for some)", poolIdx, attempt)
 				}
@@ -659,7 +659,7 @@ func TestAcquireWithTimeout(t *testing.T) {
 		resource3, err := pool.Acquire(ctx)
 		require.NoError(t, err, "should be able to acquire after timeout")
 		require.NotNil(t, resource3, "resource should not be nil")
-		resource3.Release(ctx)
+		resource3.Close()
 		close(done)
 	}()
 
@@ -738,7 +738,7 @@ func TestAcquireWithCancellation(t *testing.T) {
 	resource3, err := pool.Acquire(ctx)
 	require.NoError(t, err, "should be able to acquire after cancelled request")
 	require.NotNil(t, resource3, "resource should not be nil")
-	resource3.Release(ctx)
+	resource3.Close()
 }
 
 // TestLongWaitQueue tests behavior with many waiting clients
@@ -792,7 +792,7 @@ func TestLongWaitQueue(t *testing.T) {
 				acquireOrder <- id
 				// Hold briefly
 				time.Sleep(50 * time.Millisecond)
-				resource.Release(ctx)
+				resource.Close()
 			}
 		}(i)
 	}
@@ -924,7 +924,7 @@ func TestRapidAcquireRelease(t *testing.T) {
 					atomic.AddInt32(&successCount, 1)
 					// Very brief hold
 					time.Sleep(time.Millisecond)
-					resource.Release(ctx)
+					resource.Close()
 				} else {
 					atomic.AddInt32(&errorCount, 1)
 				}
@@ -980,7 +980,7 @@ func TestDoubleRelease(t *testing.T) {
 	resource2, err := pool.Acquire(ctx)
 	require.NoError(t, err, "should be able to acquire after double release")
 	require.NotNil(t, resource2, "resource should not be nil")
-	resource2.Release(ctx)
+	resource2.Close()
 }
 
 // TestPoolDeletion tests behavior when a pool is deleted while in use
@@ -1089,7 +1089,7 @@ func TestConcurrentPoolCreation(t *testing.T) {
 
 	// Clean up
 	for _, res := range resources {
-		res.Release(ctx)
+		res.Close()
 	}
 }
 
@@ -1207,7 +1207,7 @@ func TestStressTest(t *testing.T) {
 							if err == nil {
 								atomic.AddInt64(&successCount, 1)
 								time.Sleep(time.Duration(id%10) * time.Millisecond)
-								resource.Release(ctx)
+								resource.Close()
 							} else {
 								atomic.AddInt64(&timeoutCount, 1)
 							}
@@ -1219,7 +1219,7 @@ func TestStressTest(t *testing.T) {
 							if err == nil {
 								atomic.AddInt64(&successCount, 1)
 								time.Sleep(time.Duration(id%5) * time.Millisecond)
-								resource.Release(ctx)
+								resource.Close()
 							} else {
 								atomic.AddInt64(&timeoutCount, 1)
 							}
@@ -1233,7 +1233,7 @@ func TestStressTest(t *testing.T) {
 							resource, err := pool.Acquire(cancelCtx)
 							if err == nil {
 								atomic.AddInt64(&successCount, 1)
-								resource.Release(ctx)
+								resource.Close()
 							} else {
 								atomic.AddInt64(&cancelCount, 1)
 							}
