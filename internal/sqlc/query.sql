@@ -38,3 +38,29 @@ UPDATE numpool
 SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << (63 - @resource_index))
 WHERE id = $1
 	AND (resource_usage_status & (1::BIT(64) << (63 - @resource_index))) <> 0::BIT(64);
+
+-- name: EnqueueWaitingClient :exec
+-- EnqueueWaitingClient adds a client UUID to the wait queue.
+UPDATE numpool
+SET wait_queue = array_append(wait_queue, @client_id)
+WHERE id = $1;
+
+-- name: DequeueWaitingClient :one
+-- DequeueWaitingClient removes and returns the first client from the wait queue.
+WITH first_client AS (
+  SELECT wait_queue[1] AS client_id
+  FROM numpool
+  WHERE id = $1 AND cardinality(wait_queue) > 0
+  FOR UPDATE
+)
+UPDATE numpool
+SET wait_queue = wait_queue[2:]
+FROM first_client
+WHERE numpool.id = $1 AND cardinality(wait_queue) > 0
+RETURNING first_client.client_id;
+
+-- name: RemoveFromWaitQueue :exec
+-- RemoveFromWaitQueue removes a specific client UUID from the wait queue.
+UPDATE numpool
+SET wait_queue = array_remove(wait_queue, @client_id)
+WHERE id = $1;

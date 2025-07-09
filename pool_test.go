@@ -15,7 +15,7 @@ func TestCreateOrOpen(t *testing.T) {
 	ctx := context.Background()
 	poolID := fmt.Sprintf("test_pool_%s", t.Name())
 	dbPool := internal.MustGetPoolWithCleanup(t)
-	
+
 	// Get a connection for sqlc queries
 	conn, err := dbPool.Acquire(ctx)
 	require.NoError(t, err, "failed to acquire connection")
