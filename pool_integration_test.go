@@ -100,3 +100,75 @@ func TestParallelResourceAcquisition(t *testing.T) {
 	require.NotNil(t, resource1, "second acquired resource should not be nil")
 	require.NotEqual(t, resource0.Index(), resource1.Index(), "acquired resources should have different indices")
 }
+
+// TestResourceContentionWithMaxResourceCountOne tests resource contention
+// with MaxResourceCount=1, ensuring proper blocking and release behavior.
+func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
+	ctx := context.Background()
+	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	dbPool := internal.MustGetPoolWithCleanup(t)
+
+	// Clean up any existing pool with the same ID
+	conn, err := dbPool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire connection")
+	queries := sqlc.New(conn.Conn())
+	_ = queries.DeleteNumpool(ctx, poolID)
+	conn.Release()
+
+	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
+		Pool:              dbPool,
+		ID:                poolID,
+		MaxResourcesCount: 1,
+	})
+	require.NoError(t, err, "failed to create or open pool")
+
+	// Channel to synchronize goroutines
+	firstAcquired := make(chan struct{})
+	secondTryingToAcquire := make(chan struct{})
+	firstReleased := make(chan struct{})
+	secondAcquired := make(chan struct{})
+
+	var resource1, resource2 *numpool.Resource
+	var err1, err2 error
+
+	// First goroutine - acquires first
+	go func() {
+		resource1, err1 = pool.Acquire(ctx)
+		close(firstAcquired)
+		
+		// Wait for second goroutine to attempt acquire
+		<-secondTryingToAcquire
+		
+		// Release after ensuring second is waiting
+		err := resource1.Release(ctx)
+		if err != nil {
+			panic(err)
+		}
+		close(firstReleased)
+	}()
+
+	// Second goroutine - waits for first to acquire, then tries to acquire
+	go func() {
+		// Ensure first goroutine acquires first
+		<-firstAcquired
+		
+		// Signal that we're about to try acquiring
+		close(secondTryingToAcquire)
+		
+		// This should block until first releases
+		resource2, err2 = pool.Acquire(ctx)
+		close(secondAcquired)
+	}()
+
+	// Wait for everything to complete
+	<-firstReleased
+	<-secondAcquired
+
+	// Verify results
+	require.NoError(t, err1, "first goroutine failed to acquire resource")
+	require.NoError(t, err2, "second goroutine failed to acquire resource")
+	require.NotNil(t, resource1, "first acquired resource should not be nil")
+	require.NotNil(t, resource2, "second acquired resource should not be nil")
+	require.Equal(t, 0, resource1.Index(), "first acquired resource should have index 0")
+	require.Equal(t, 0, resource2.Index(), "second acquired resource should have index 0 (reused after release)")
+}
