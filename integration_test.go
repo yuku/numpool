@@ -826,7 +826,7 @@ func TestLongWaitQueue(t *testing.T) {
 	require.Len(t, order, numWaiters, "all waiters should have acquired")
 }
 
-// TestMaxResourcesLimit tests the maximum resource count limit (64)
+// TestMaxResourcesLimit tests the maximum resource count limit
 func TestMaxResourcesLimit(t *testing.T) {
 	ctx := context.Background()
 	poolID := fmt.Sprintf("test_pool_%s", t.Name())
@@ -843,14 +843,14 @@ func TestMaxResourcesLimit(t *testing.T) {
 	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
 		Pool:              dbPool,
 		ID:                poolID,
-		MaxResourcesCount: 64,
+		MaxResourcesCount: numpool.MaxResourcesLimit,
 	})
-	require.NoError(t, err, "should be able to create pool with 64 resources")
+	require.NoError(t, err, "should be able to create pool with %d resources", numpool.MaxResourcesLimit)
 	require.NotNil(t, pool, "pool should not be nil")
 
-	// Verify we can acquire all 64 resources
-	resources := make([]*numpool.Resource, 64)
-	for i := range 64 {
+	// Verify we can acquire all resources up to the limit
+	resources := make([]*numpool.Resource, numpool.MaxResourcesLimit)
+	for i := range numpool.MaxResourcesLimit {
 		resources[i], err = pool.Acquire(ctx)
 		require.NoError(t, err, "failed to acquire resource %d", i)
 		require.NotNil(t, resources[i], "resource %d should not be nil", i)
@@ -862,7 +862,7 @@ func TestMaxResourcesLimit(t *testing.T) {
 	defer cancel()
 
 	extra, err := pool.Acquire(timeoutCtx)
-	require.Error(t, err, "should not be able to acquire 65th resource")
+	require.Error(t, err, "should not be able to acquire resource beyond limit")
 	require.Nil(t, extra, "extra resource should be nil")
 
 	// Release all resources
@@ -875,9 +875,9 @@ func TestMaxResourcesLimit(t *testing.T) {
 	_, err = numpool.CreateOrOpen(ctx, numpool.Config{
 		Pool:              dbPool,
 		ID:                "too_many_resources",
-		MaxResourcesCount: 65,
+		MaxResourcesCount: numpool.MaxResourcesLimit + 1,
 	})
-	require.Error(t, err, "should not be able to create pool with 65 resources")
+	require.Error(t, err, "should not be able to create pool with %d resources", numpool.MaxResourcesLimit+1)
 }
 
 // TestRapidAcquireRelease tests rapid acquire/release cycles

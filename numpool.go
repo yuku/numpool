@@ -61,6 +61,10 @@ type Resource = numpool.Resource
 // Config holds the configuration for creating or opening a pool.
 type Config = numpool.Config
 
+// MaxResourcesLimit is the maximum number of resources that can be in a pool.
+// This limit is due to the bit representation used for tracking resource usage.
+const MaxResourcesLimit = numpool.MaxResourcesLimit
+
 // CreateOrOpen creates a new pool or opens an existing one based on the
 // provided configuration. If the pool already exists with a different
 // MaxResourcesCount, it returns an error.
