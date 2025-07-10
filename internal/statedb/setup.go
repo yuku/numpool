@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuku/numpool/internal/sqlc"
 )
 
@@ -14,11 +13,11 @@ var schemaSQL string
 
 // Setup initializes the numpool table.
 // It uses PostgreSQL advisory locks to prevent concurrent setup attempts.
-func Setup(ctx context.Context, conn *pgx.Conn) error {
+func Setup(ctx context.Context, conn sqlc.DBTX) error {
 	// Use advisory lock to prevent concurrent schema creation
 	// Lock ID 12345 is arbitrary but must be consistent across all processes
 	const lockID int64 = 12345
-	
+
 	// Try to acquire exclusive advisory lock
 	_, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID)
 	if err != nil {
