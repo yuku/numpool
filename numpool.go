@@ -46,7 +46,9 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuku/numpool/internal/numpool"
+	"github.com/yuku/numpool/internal/sqlc"
 	"github.com/yuku/numpool/internal/statedb"
 )
 
@@ -60,6 +62,13 @@ type Resource = numpool.Resource
 
 // Config holds the configuration for creating or opening a pool.
 type Config = numpool.Config
+
+// Conn is the interface for database connection used by numpool.
+// pgx.Conn and pgxpool.Pool both implement this interface.
+type Conn = sqlc.DBTX
+
+var _ Conn = (*pgx.Conn)(nil)
+var _ Conn = (*pgxpool.Pool)(nil)
 
 // MaxResourcesLimit is the maximum number of resources that can be in a pool.
 // This limit is due to the bit representation used for tracking resource usage.
@@ -75,6 +84,6 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 // Setup initializes the numpool table in the database.
 // This function should be called once before using any pools.
 // It is safe to call multiple times as it will not recreate existing tables.
-func Setup(ctx context.Context, conn *pgx.Conn) error {
+func Setup(ctx context.Context, conn Conn) error {
 	return statedb.Setup(ctx, conn)
 }
