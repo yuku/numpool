@@ -1,0 +1,10 @@
+echo "Running pre-commit hooks..."
+
+echo "go fmt"
+go fmt
+
+echo "golangci-lint run"
+golangci-lint run
+
+echo "go test"
+go test -timeout 10s -race ./...
