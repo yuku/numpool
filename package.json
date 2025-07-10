@@ -1,0 +1,12 @@
+{
+  "name": "numpool",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@10.12.2",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}
