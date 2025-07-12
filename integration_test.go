@@ -2,7 +2,6 @@ package numpool_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,18 +17,9 @@ import (
 // from a pool and ensures that the resources are acquired in the expected order.
 func TestSequentialResourceAcquisition(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 2,
 	})
@@ -58,23 +48,60 @@ func TestSequentialResourceAcquisition(t *testing.T) {
 	require.Equal(t, 0, resource2.Index(), "acquired resource after release should have index 0")
 }
 
+func TestBlockedResourceAcquisition(t *testing.T) {
+	ctx := context.Background()
+	manager, poolID := setupWithUniquePoolID(t)
+
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
+		ID:                poolID,
+		MaxResourcesCount: 2,
+	})
+	require.NoError(t, err, "failed to create or open pool")
+
+	// Acquire the first resource0
+	resource0, err := pool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire resource")
+	require.NotNil(t, resource0, "acquired resource should not be nil")
+	require.Equal(t, 0, resource0.Index(), "first acquired resource should have index 0")
+
+	// Acquire the second resource
+	resource1, err := pool.Acquire(ctx)
+	require.NoError(t, err, "failed to acquire second resource")
+	require.NotNil(t, resource1, "second acquired resource should not be nil")
+	require.Equal(t, 1, resource1.Index(), "second acquired resource should have index 1")
+
+	done := make(chan struct{})
+	go func() {
+		resource2, err := pool.Acquire(ctx) // This should block until resource0 is released
+		require.NoError(t, err, "failed to acquire resource after releasing")
+		require.NotNil(t, resource2, "acquired resource after release should not be nil")
+		require.Equal(t, 0, resource2.Index(), "acquired resource after release should have index 0")
+		close(done)
+	}()
+
+	// Small delay to ensure we're in the Acquire call
+	time.Sleep(10 * time.Millisecond)
+
+	// Release the first resource
+	err = resource0.Release(ctx)
+	require.NoError(t, err, "failed to release resource 0")
+
+	select {
+	case <-done:
+		// Good, resource2 was acquired after release
+	case <-time.After(100 * time.Millisecond):
+		require.FailNow(t, "failed to acquire resource after releasing resource 0")
+	}
+}
+
 // TestParallelResourceAcquisition tests acquiring resources in parallel
 // without resource contention, ensuring that each goroutine
 // acquires a unique resource from the pool.
 func TestParallelResourceAcquisition(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 2,
 	})
@@ -110,18 +137,9 @@ func TestParallelResourceAcquisition(t *testing.T) {
 // with MaxResourceCount=1, ensuring proper blocking and release behavior.
 func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -190,27 +208,17 @@ func TestResourceContentionWithMaxResourceCountOne(t *testing.T) {
 // resources and wait queue.
 func TestMultiplePoolInstancesWithSameID(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	// Create first pool instance
-	pool1, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool1, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 2,
 	})
 	require.NoError(t, err, "failed to create first pool instance")
 
 	// Create second pool instance with the same ID
-	pool2, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool2, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 2,
 	})
@@ -272,18 +280,9 @@ func TestMultiplePoolInstancesWithSameID(t *testing.T) {
 // TestIdempotentRelease tests that Release can be called multiple times safely.
 func TestIdempotentRelease(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -320,18 +319,9 @@ func TestIdempotentRelease(t *testing.T) {
 // TestResourceCloseMethod tests that Close() method works correctly.
 func TestResourceCloseMethod(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -365,21 +355,12 @@ func TestResourceCloseMethod(t *testing.T) {
 // resources concurrently and that all waiting goroutines eventually get resources.
 func TestMultipleConcurrentAcquires(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	const maxResources = 2
 	const numGoroutines = 10
 
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: maxResources,
 	})
@@ -495,15 +476,7 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 // with the same ID correctly share resources and handle concurrent acquisitions.
 func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	const maxResources = 3
 	const numPools = 4
@@ -511,8 +484,7 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	// Create multiple pool instances with the same ID
 	pools := make([]*numpool.Numpool, numPools)
 	for i := range numPools {
-		pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-			Pool:              dbPool,
+		pool, err := manager.GetOrCreate(ctx, numpool.Config{
 			ID:                poolID,
 			MaxResourcesCount: maxResources,
 		})
@@ -525,6 +497,7 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	resources := make([]*numpool.Resource, maxResources)
 	for i := range maxResources {
 		poolIdx := i % numPools // Use different pools
+		var err error
 		resources[i], err = pools[poolIdx].Acquire(ctx)
 		require.NoError(t, err, "failed to acquire resource %d from pool %d", i, poolIdx)
 		require.NotNil(t, resources[i], "resource %d should not be nil", i)
@@ -551,7 +524,7 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	}
 
 	// Release one resource from a different pool
-	err = resources[0].Release(ctx)
+	err := resources[0].Release(ctx)
 	require.NoError(t, err, "failed to release resource")
 
 	// Now the blocked acquisition should complete
@@ -616,18 +589,9 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 // when acquiring resources.
 func TestAcquireWithTimeout(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -673,7 +637,7 @@ func TestAcquireWithTimeout(t *testing.T) {
 	case <-done:
 		// Good
 	case <-time.After(1 * time.Second):
-		t.Fatal("goroutine should complete after resource is released")
+		require.FailNow(t, "goroutine should complete after resource is released")
 	}
 }
 
@@ -681,18 +645,9 @@ func TestAcquireWithTimeout(t *testing.T) {
 // respected when acquiring resources.
 func TestAcquireWithCancellation(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -744,21 +699,12 @@ func TestAcquireWithCancellation(t *testing.T) {
 // TestLongWaitQueue tests behavior with many waiting clients
 func TestLongWaitQueue(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	const maxResources = 2
 	const numWaiters = 10
 
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: maxResources,
 	})
@@ -829,19 +775,10 @@ func TestLongWaitQueue(t *testing.T) {
 // TestMaxResourcesLimit tests the maximum resource count limit
 func TestMaxResourcesLimit(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	// Test creating pool with maximum allowed resources
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: numpool.MaxResourcesLimit,
 	})
@@ -872,8 +809,7 @@ func TestMaxResourcesLimit(t *testing.T) {
 	}
 
 	// Test creating pool with too many resources
-	_, err = numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	_, err = manager.GetOrCreate(ctx, numpool.Config{
 		ID:                "too_many_resources",
 		MaxResourcesCount: numpool.MaxResourcesLimit + 1,
 	})
@@ -883,18 +819,9 @@ func TestMaxResourcesLimit(t *testing.T) {
 // TestRapidAcquireRelease tests rapid acquire/release cycles
 func TestRapidAcquireRelease(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 5,
 	})
@@ -946,18 +873,9 @@ func TestRapidAcquireRelease(t *testing.T) {
 // TestDoubleRelease tests that releasing a resource twice is safe
 func TestDoubleRelease(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -986,18 +904,9 @@ func TestDoubleRelease(t *testing.T) {
 // TestPoolDeletion tests behavior when a pool is deleted while in use
 func TestPoolDeletion(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 2,
 	})
@@ -1009,10 +918,7 @@ func TestPoolDeletion(t *testing.T) {
 	require.NotNil(t, resource1, "resource should not be nil")
 
 	// Delete the pool from database
-	conn2, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	err = queries.DeleteNumpool(ctx, poolID)
-	conn2.Release()
+	err = sqlc.New(internal.MustGetPoolWithCleanup(t)).DeleteNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to delete pool")
 
 	// Try to acquire another resource - should fail
@@ -1029,15 +935,7 @@ func TestPoolDeletion(t *testing.T) {
 // TestConcurrentPoolCreation tests multiple goroutines creating the same pool
 func TestConcurrentPoolCreation(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	const numGoroutines = 10
 	const maxResources = 5
@@ -1052,8 +950,7 @@ func TestConcurrentPoolCreation(t *testing.T) {
 	for i := range numGoroutines {
 		go func(id int) {
 			defer wg.Done()
-			pools[id], errors[id] = numpool.CreateOrOpen(ctx, numpool.Config{
-				Pool:              dbPool,
+			pools[id], errors[id] = manager.GetOrCreate(ctx, numpool.Config{
 				ID:                poolID,
 				MaxResourcesCount: maxResources,
 			})
@@ -1096,18 +993,9 @@ func TestConcurrentPoolCreation(t *testing.T) {
 // TestContextPropagation tests that context values and deadlines are properly propagated
 func TestContextPropagation(t *testing.T) {
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
+	manager, poolID := setupWithUniquePoolID(t)
 
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
-
-	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-		Pool:              dbPool,
+	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
@@ -1143,15 +1031,7 @@ func TestStressTest(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
-	dbPool := internal.MustGetPoolWithCleanup(t)
-
-	// Clean up any existing pool with the same ID
-	conn, err := dbPool.Acquire(ctx)
-	require.NoError(t, err, "failed to acquire connection")
-	queries := sqlc.New(conn.Conn())
-	_ = queries.DeleteNumpool(ctx, poolID)
-	conn.Release()
+	manager, poolID := setupWithUniquePoolID(t)
 
 	const maxResources = 10
 	const numPools = 5
@@ -1161,8 +1041,8 @@ func TestStressTest(t *testing.T) {
 	// Create multiple pool instances
 	pools := make([]*numpool.Numpool, numPools)
 	for i := range numPools {
-		pools[i], err = numpool.CreateOrOpen(ctx, numpool.Config{
-			Pool:              dbPool,
+		var err error
+		pools[i], err = manager.GetOrCreate(ctx, numpool.Config{
 			ID:                poolID,
 			MaxResourcesCount: maxResources,
 		})

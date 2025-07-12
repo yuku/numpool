@@ -2,7 +2,7 @@ CREATE TABLE numpool (
   id VARCHAR(100) PRIMARY KEY,
   max_resources_count INT NOT NULL CHECK (max_resources_count BETWEEN 1 AND 64),
   resource_usage_status BIT(64) NOT NULL DEFAULT 0::BIT(64),
-  wait_queue UUID[] NOT NULL DEFAULT '{}'
+  wait_queue VARCHAR(100)[] NOT NULL DEFAULT '{}'
 );
 
 COMMENT ON TABLE numpool IS 'Numpool represents an abstract pool of resources.';

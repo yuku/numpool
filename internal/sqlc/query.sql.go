@@ -7,9 +7,16 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const acquireAdvisoryLock = `-- name: AcquireAdvisoryLock :exec
+SELECT pg_advisory_xact_lock($1)
+`
+
+func (q *Queries) AcquireAdvisoryLock(ctx context.Context, lockID int64) error {
+	_, err := q.db.Exec(ctx, acquireAdvisoryLock, lockID)
+	return err
+}
 
 const acquireResource = `-- name: AcquireResource :execrows
 UPDATE numpool
@@ -31,6 +38,66 @@ func (q *Queries) AcquireResource(ctx context.Context, arg AcquireResourceParams
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const acquireResourceAndDequeueFirstWaiter = `-- name: AcquireResourceAndDequeueFirstWaiter :execrows
+UPDATE numpool
+SET
+  resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - $2::INTEGER)),
+  wait_queue = wait_queue[2:]
+WHERE id = $1
+  AND (resource_usage_status & (1::BIT(64) << (63 - $2))) = 0::BIT(64)
+  AND cardinality(wait_queue) > 0
+  AND wait_queue[1] = $3::VARCHAR(100)
+`
+
+type AcquireResourceAndDequeueFirstWaiterParams struct {
+	ID            string
+	ResourceIndex int32
+	WaiterID      string
+}
+
+// AcquireResourceAndDequeueFirstWaiter attempts to acquire a resource and dequeue the first client
+// from the wait queue if successful.
+func (q *Queries) AcquireResourceAndDequeueFirstWaiter(ctx context.Context, arg AcquireResourceAndDequeueFirstWaiterParams) (int64, error) {
+	result, err := q.db.Exec(ctx, acquireResourceAndDequeueFirstWaiter, arg.ID, arg.ResourceIndex, arg.WaiterID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const checkNumpoolExists = `-- name: CheckNumpoolExists :one
+SELECT EXISTS (
+    SELECT 1
+    FROM numpool
+    WHERE id = $1
+) AS exists
+`
+
+// CheckNumpoolExists checks if a numpool with the given id exists.
+func (q *Queries) CheckNumpoolExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, checkNumpoolExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const checkNumpoolTableExist = `-- name: CheckNumpoolTableExist :one
+SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'numpool'
+) AS exists
+`
+
+// CheckNumpoolTableExist checks if "public"."numpool" exists.
+func (q *Queries) CheckNumpoolTableExist(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, checkNumpoolTableExist)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const createNumpool = `-- name: CreateNumpool :exec
@@ -59,59 +126,20 @@ func (q *Queries) DeleteNumpool(ctx context.Context, id string) error {
 	return err
 }
 
-const dequeueWaitingClient = `-- name: DequeueWaitingClient :one
-WITH first_client AS (
-  SELECT wait_queue[1] AS client_id
-  FROM numpool
-  WHERE id = $1 AND cardinality(wait_queue) > 0
-  FOR UPDATE
-)
-UPDATE numpool
-SET wait_queue = wait_queue[2:]
-FROM first_client
-WHERE numpool.id = $1 AND cardinality(wait_queue) > 0
-RETURNING first_client.client_id::UUID
-`
-
-// DequeueWaitingClient removes and returns the first client from the wait queue.
-func (q *Queries) DequeueWaitingClient(ctx context.Context, id string) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, dequeueWaitingClient, id)
-	var first_client_client_id pgtype.UUID
-	err := row.Scan(&first_client_client_id)
-	return first_client_client_id, err
-}
-
-const doesNumpoolTableExist = `-- name: DoesNumpoolTableExist :one
-SELECT EXISTS (
-    SELECT 1
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-      AND table_name = 'numpool'
-) AS exists
-`
-
-// DoesNumpoolTableExist checks if "public"."numpool" exists.
-func (q *Queries) DoesNumpoolTableExist(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, doesNumpoolTableExist)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const enqueueWaitingClient = `-- name: EnqueueWaitingClient :exec
 UPDATE numpool
-SET wait_queue = array_append(wait_queue, $2)
+SET wait_queue = array_append(wait_queue, $2::VARCHAR(100))
 WHERE id = $1
 `
 
 type EnqueueWaitingClientParams struct {
 	ID       string
-	ClientID interface{}
+	WaiterID string
 }
 
-// EnqueueWaitingClient adds a client UUID to the wait queue.
+// EnqueueWaitingClient adds a waiter ID to the wait queue.
 func (q *Queries) EnqueueWaitingClient(ctx context.Context, arg EnqueueWaitingClientParams) error {
-	_, err := q.db.Exec(ctx, enqueueWaitingClient, arg.ID, arg.ClientID)
+	_, err := q.db.Exec(ctx, enqueueWaitingClient, arg.ID, arg.WaiterID)
 	return err
 }
 
@@ -149,6 +177,29 @@ func (q *Queries) GetNumpoolForUpdate(ctx context.Context, id string) (Numpool, 
 	return i, err
 }
 
+const lockNumpoolTableInShareMode = `-- name: LockNumpoolTableInShareMode :exec
+LOCK TABLE numpool IN SHARE ROW EXCLUSIVE MODE
+`
+
+func (q *Queries) LockNumpoolTableInShareMode(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockNumpoolTableInShareMode)
+	return err
+}
+
+const notifyWaiters = `-- name: NotifyWaiters :exec
+SELECT pg_notify($1, $2)
+`
+
+type NotifyWaitersParams struct {
+	ChannelName string
+	WaiterID    string
+}
+
+func (q *Queries) NotifyWaiters(ctx context.Context, arg NotifyWaitersParams) error {
+	_, err := q.db.Exec(ctx, notifyWaiters, arg.ChannelName, arg.WaiterID)
+	return err
+}
+
 const releaseResource = `-- name: ReleaseResource :execrows
 UPDATE numpool
 SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << (63 - $2))
@@ -178,11 +229,11 @@ WHERE id = $1
 
 type RemoveFromWaitQueueParams struct {
 	ID       string
-	ClientID interface{}
+	WaiterID interface{}
 }
 
-// RemoveFromWaitQueue removes a specific client UUID from the wait queue.
+// RemoveFromWaitQueue removes a specific waiter UUID from the wait queue.
 func (q *Queries) RemoveFromWaitQueue(ctx context.Context, arg RemoveFromWaitQueueParams) error {
-	_, err := q.db.Exec(ctx, removeFromWaitQueue, arg.ID, arg.ClientID)
+	_, err := q.db.Exec(ctx, removeFromWaitQueue, arg.ID, arg.WaiterID)
 	return err
 }

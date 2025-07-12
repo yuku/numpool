@@ -66,13 +66,13 @@ func main() {
 func runSetup() error {
 	ctx := context.Background()
 
-	conn, err := internal.GetConnection(ctx)
+	pool, err := internal.GetPool(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close(ctx) }()
+	defer pool.Close()
 
-	if err := numpool.Setup(ctx, conn); err != nil {
+	if _, err := numpool.Setup(ctx, pool); err != nil {
 		return fmt.Errorf("failed to setup database: %w", err)
 	}
 

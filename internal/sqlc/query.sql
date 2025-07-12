@@ -1,5 +1,5 @@
--- name: DoesNumpoolTableExist :one
--- DoesNumpoolTableExist checks if "public"."numpool" exists.
+-- name: CheckNumpoolTableExist :one
+-- CheckNumpoolTableExist checks if "public"."numpool" exists.
 SELECT EXISTS (
     SELECT 1
     FROM information_schema.tables
@@ -14,6 +14,14 @@ SELECT * FROM numpool WHERE id = $1 FOR UPDATE;
 -- name: GetNumpool :one
 -- GetNumpoolForUpdate retrieves the numpool row with the given id without locking it.
 SELECT * FROM numpool WHERE id = $1;
+
+-- name: CheckNumpoolExists :one
+-- CheckNumpoolExists checks if a numpool with the given id exists.
+SELECT EXISTS (
+    SELECT 1
+    FROM numpool
+    WHERE id = $1
+) AS exists;
 
 -- name: CreateNumpool :exec
 -- CreateNumpool creates a new numpool with the specified id and max_resources_count.
@@ -40,27 +48,34 @@ WHERE id = $1
 	AND (resource_usage_status & (1::BIT(64) << (63 - @resource_index))) <> 0::BIT(64);
 
 -- name: EnqueueWaitingClient :exec
--- EnqueueWaitingClient adds a client UUID to the wait queue.
+-- EnqueueWaitingClient adds a waiter ID to the wait queue.
 UPDATE numpool
-SET wait_queue = array_append(wait_queue, @client_id)
+SET wait_queue = array_append(wait_queue, @waiter_id::VARCHAR(100))
 WHERE id = $1;
 
--- name: DequeueWaitingClient :one
--- DequeueWaitingClient removes and returns the first client from the wait queue.
-WITH first_client AS (
-  SELECT wait_queue[1] AS client_id
-  FROM numpool
-  WHERE id = $1 AND cardinality(wait_queue) > 0
-  FOR UPDATE
-)
+-- name: AcquireResourceAndDequeueFirstWaiter :execrows
+-- AcquireResourceAndDequeueFirstWaiter attempts to acquire a resource and dequeue the first client
+-- from the wait queue if successful.
 UPDATE numpool
-SET wait_queue = wait_queue[2:]
-FROM first_client
-WHERE numpool.id = $1 AND cardinality(wait_queue) > 0
-RETURNING first_client.client_id::UUID;
+SET
+  resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - @resource_index::INTEGER)),
+  wait_queue = wait_queue[2:]
+WHERE id = $1
+  AND (resource_usage_status & (1::BIT(64) << (63 - @resource_index))) = 0::BIT(64)
+  AND cardinality(wait_queue) > 0
+  AND wait_queue[1] = @waiter_id::VARCHAR(100);
 
 -- name: RemoveFromWaitQueue :exec
--- RemoveFromWaitQueue removes a specific client UUID from the wait queue.
+-- RemoveFromWaitQueue removes a specific waiter UUID from the wait queue.
 UPDATE numpool
-SET wait_queue = array_remove(wait_queue, @client_id)
+SET wait_queue = array_remove(wait_queue, @waiter_id)
 WHERE id = $1;
+
+-- name: NotifyWaiters :exec
+SELECT pg_notify(@channel_name, @waiter_id);
+
+-- name: LockNumpoolTableInShareMode :exec
+LOCK TABLE numpool IN SHARE ROW EXCLUSIVE MODE;
+
+-- name: AcquireAdvisoryLock :exec
+SELECT pg_advisory_xact_lock(@lock_id);
