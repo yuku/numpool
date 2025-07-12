@@ -147,23 +147,21 @@ func (p *Numpool) ID() string {
 }
 
 // Acquire acquires a resource from the pool.
-// Deprecated: Use NewClient(pool).Acquire(ctx) instead.
 func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
-	client := NewClient(p)
-	return client.Acquire(ctx)
+	return newAcquirer(p).Acquire(ctx)
 }
 
-// registerClient registers a client's notification channel.
-func (p *Numpool) registerClient(clientID string, ch chan struct{}) {
+// registerAcquirer registers an acquirer's notification channel.
+func (p *Numpool) registerAcquirer(acquirerID string, ch chan struct{}) {
 	p.mu.Lock()
-	p.notifyHandlers[clientID] = ch
+	p.notifyHandlers[acquirerID] = ch
 	p.mu.Unlock()
 }
 
-// unregisterClient removes a client's notification channel.
-func (p *Numpool) unregisterClient(clientID string) {
+// unregisterAcquirer removes an acquirer's notification channel.
+func (p *Numpool) unregisterAcquirer(acquirerID string) {
 	p.mu.Lock()
-	delete(p.notifyHandlers, clientID)
+	delete(p.notifyHandlers, acquirerID)
 	p.mu.Unlock()
 }
 
@@ -184,7 +182,7 @@ func (p *Numpool) release(ctx context.Context, r *Resource) error {
 			return fmt.Errorf("resource was not in use")
 		}
 
-		// Check if there are waiting clients
+		// Check if there are waiting acquirers
 		clientID, err := q.DequeueWaitingClient(ctx, p.id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

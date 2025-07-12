@@ -10,29 +10,29 @@ import (
 	"github.com/yuku/numpool/internal/sqlc"
 )
 
-// Client represents a client that can acquire resources from a pool.
-type Client struct {
+// Acquirer represents an entity that can acquire resources from a pool.
+type Acquirer struct {
 	id     uuid.UUID
 	pool   *Numpool
 	notify chan struct{}
 }
 
-// NewClient creates a new client for the given pool.
-func NewClient(pool *Numpool) *Client {
-	return &Client{
+// newAcquirer creates a new acquirer for the given pool.
+func newAcquirer(pool *Numpool) *Acquirer {
+	return &Acquirer{
 		id:     uuid.New(),
 		pool:   pool,
 		notify: make(chan struct{}, 1),
 	}
 }
 
-// ID returns the client's unique identifier.
-func (c *Client) ID() uuid.UUID {
+// ID returns the acquirer's unique identifier.
+func (c *Acquirer) ID() uuid.UUID {
 	return c.id
 }
 
 // Acquire acquires a resource from the pool.
-func (c *Client) Acquire(ctx context.Context) (*Resource, error) {
+func (c *Acquirer) Acquire(ctx context.Context) (*Resource, error) {
 	for {
 		// Try to acquire a resource
 		resource, err := c.tryAcquire(ctx)
@@ -44,8 +44,8 @@ func (c *Client) Acquire(ctx context.Context) (*Resource, error) {
 		}
 
 		// No resources available, register for notifications
-		c.pool.registerClient(c.id.String(), c.notify)
-		defer c.pool.unregisterClient(c.id.String())
+		c.pool.registerAcquirer(c.id.String(), c.notify)
+		defer c.pool.unregisterAcquirer(c.id.String())
 
 		// Add to wait queue
 		err = c.enqueue(ctx)
@@ -67,7 +67,7 @@ func (c *Client) Acquire(ctx context.Context) (*Resource, error) {
 }
 
 // tryAcquire attempts to acquire a resource without blocking.
-func (c *Client) tryAcquire(ctx context.Context) (*Resource, error) {
+func (c *Acquirer) tryAcquire(ctx context.Context) (*Resource, error) {
 	var resource *Resource
 
 	err := pgx.BeginFunc(ctx, c.pool.pool, func(tx pgx.Tx) error {
@@ -114,8 +114,8 @@ func (c *Client) tryAcquire(ctx context.Context) (*Resource, error) {
 	return resource, nil
 }
 
-// enqueue adds the client to the wait queue.
-func (c *Client) enqueue(ctx context.Context) error {
+// enqueue adds the acquirer to the wait queue.
+func (c *Acquirer) enqueue(ctx context.Context) error {
 	conn, err := c.pool.pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to acquire connection: %w", err)
@@ -131,8 +131,8 @@ func (c *Client) enqueue(ctx context.Context) error {
 	})
 }
 
-// removeFromQueue removes the client from the wait queue.
-func (c *Client) removeFromQueue(ctx context.Context) error {
+// removeFromQueue removes the acquirer from the wait queue.
+func (c *Acquirer) removeFromQueue(ctx context.Context) error {
 	conn, err := c.pool.pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to acquire connection: %w", err)
