@@ -509,7 +509,7 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	const numPools = 4
 
 	// Create multiple pool instances with the same ID
-	pools := make([]*numpool.Pool, numPools)
+	pools := make([]*numpool.Numpool, numPools)
 	for i := range numPools {
 		pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
 			Pool:              dbPool,
@@ -582,7 +582,7 @@ func TestMultiplePoolInstancesConcurrentAcquires(t *testing.T) {
 	wg.Add(totalAttempts)
 	for poolIdx := range numPools {
 		for attempt := range 2 {
-			go func(pool *numpool.Pool, poolIdx, attempt int) {
+			go func(pool *numpool.Numpool, poolIdx, attempt int) {
 				defer wg.Done()
 
 				// Try to acquire with a timeout
@@ -1045,7 +1045,7 @@ func TestConcurrentPoolCreation(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	pools := make([]*numpool.Pool, numGoroutines)
+	pools := make([]*numpool.Numpool, numGoroutines)
 	errors := make([]error, numGoroutines)
 
 	// All goroutines try to create the same pool
@@ -1159,7 +1159,7 @@ func TestStressTest(t *testing.T) {
 	const duration = 5 * time.Second
 
 	// Create multiple pool instances
-	pools := make([]*numpool.Pool, numPools)
+	pools := make([]*numpool.Numpool, numPools)
 	for i := range numPools {
 		pools[i], err = numpool.CreateOrOpen(ctx, numpool.Config{
 			Pool:              dbPool,
@@ -1190,7 +1190,7 @@ func TestStressTest(t *testing.T) {
 	for poolIdx := range numPools {
 		for i := range numGoroutinesPerPool {
 			wg.Add(1)
-			go func(pool *numpool.Pool, id int) {
+			go func(pool *numpool.Numpool, id int) {
 				defer wg.Done()
 
 				for {

@@ -13,12 +13,12 @@ import (
 // Client represents a client that can acquire resources from a pool.
 type Client struct {
 	id     uuid.UUID
-	pool   *Pool
+	pool   *Numpool
 	notify chan struct{}
 }
 
 // NewClient creates a new client for the given pool.
-func NewClient(pool *Pool) *Client {
+func NewClient(pool *Numpool) *Client {
 	return &Client{
 		id:     uuid.New(),
 		pool:   pool,

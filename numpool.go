@@ -14,8 +14,8 @@ import (
 	"github.com/yuku/numpool/internal/sqlc"
 )
 
-// Pool represents a pool of resources that can be acquired and released.
-type Pool struct {
+// Numpool represents a pool of resources that can be acquired and released.
+type Numpool struct {
 	id       string
 	pool     *pgxpool.Pool
 	listener *pgxlisten.Listener
@@ -55,7 +55,7 @@ func (c Config) Validate() error {
 // CreateOrOpen creates a new pool or opens an existing one based on the
 // provided configuration. If the pool already exists with a different
 // MaxResourcesCount, it returns an error.
-func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
+func CreateOrOpen(ctx context.Context, conf Config) (*Numpool, error) {
 	if err := conf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid pool configuration: %w", err)
 	}
@@ -113,7 +113,7 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 		},
 	}
 
-	pool := &Pool{
+	pool := &Numpool{
 		id:             conf.ID,
 		pool:           conf.Pool,
 		listener:       listener,
@@ -142,33 +142,33 @@ func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
 }
 
 // ID returns the unique identifier of the pool.
-func (p *Pool) ID() string {
+func (p *Numpool) ID() string {
 	return p.id
 }
 
 // Acquire acquires a resource from the pool.
 // Deprecated: Use NewClient(pool).Acquire(ctx) instead.
-func (p *Pool) Acquire(ctx context.Context) (*Resource, error) {
+func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 	client := NewClient(p)
 	return client.Acquire(ctx)
 }
 
 // registerClient registers a client's notification channel.
-func (p *Pool) registerClient(clientID string, ch chan struct{}) {
+func (p *Numpool) registerClient(clientID string, ch chan struct{}) {
 	p.mu.Lock()
 	p.notifyHandlers[clientID] = ch
 	p.mu.Unlock()
 }
 
 // unregisterClient removes a client's notification channel.
-func (p *Pool) unregisterClient(clientID string) {
+func (p *Numpool) unregisterClient(clientID string) {
 	p.mu.Lock()
 	delete(p.notifyHandlers, clientID)
 	p.mu.Unlock()
 }
 
 // release releases a resource back to the pool.
-func (p *Pool) release(ctx context.Context, r *Resource) error {
+func (p *Numpool) release(ctx context.Context, r *Resource) error {
 	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 
@@ -209,7 +209,7 @@ func (p *Pool) release(ctx context.Context, r *Resource) error {
 }
 
 // handleNotification handles incoming notifications from PostgreSQL
-func (p *Pool) handleNotification(ctx context.Context, notification *pgconn.Notification, conn *pgx.Conn) error {
+func (p *Numpool) handleNotification(ctx context.Context, notification *pgconn.Notification, conn *pgx.Conn) error {
 	p.mu.Lock()
 	ch, exists := p.notifyHandlers[notification.Payload]
 	p.mu.Unlock()
