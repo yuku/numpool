@@ -2,7 +2,8 @@ CREATE TABLE numpool (
   id VARCHAR(100) PRIMARY KEY,
   max_resources_count INT NOT NULL CHECK (max_resources_count BETWEEN 1 AND 64),
   resource_usage_status BIT(64) NOT NULL DEFAULT 0::BIT(64),
-  wait_queue VARCHAR(100)[] NOT NULL DEFAULT '{}'
+  wait_queue VARCHAR(100)[] NOT NULL DEFAULT '{}',
+  metadata JSONB
 );
 
 COMMENT ON TABLE numpool IS 'Numpool represents an abstract pool of resources.';
@@ -20,3 +21,7 @@ The length of the bitmask is equal to MaxResourcesCount.
 For example, if MaxResourcesCount is 8, then ResourceUsageStatus can be a value from 0 to 64, where each bit represents the usage of a resource.';
 
 COMMENT ON COLUMN numpool.wait_queue IS 'WaitQueue is a list of client ids waiting for the numpool.';
+
+COMMENT ON COLUMN numpool.metadata IS 'Metadata is a JSONB field that can store additional information about the numpool.
+It can be used to store any additional data that is relevant to the numpool, such as
+configuration settings, descriptions, or other metadata that does not fit into the other fields.';

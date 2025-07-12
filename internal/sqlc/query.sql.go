@@ -144,7 +144,7 @@ func (q *Queries) EnqueueWaitingClient(ctx context.Context, arg EnqueueWaitingCl
 }
 
 const getNumpool = `-- name: GetNumpool :one
-SELECT id, max_resources_count, resource_usage_status, wait_queue FROM numpool WHERE id = $1
+SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpool WHERE id = $1
 `
 
 // GetNumpoolForUpdate retrieves the numpool row with the given id without locking it.
@@ -156,12 +156,13 @@ func (q *Queries) GetNumpool(ctx context.Context, id string) (Numpool, error) {
 		&i.MaxResourcesCount,
 		&i.ResourceUsageStatus,
 		&i.WaitQueue,
+		&i.Metadata,
 	)
 	return i, err
 }
 
 const getNumpoolForUpdate = `-- name: GetNumpoolForUpdate :one
-SELECT id, max_resources_count, resource_usage_status, wait_queue FROM numpool WHERE id = $1 FOR UPDATE
+SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpool WHERE id = $1 FOR UPDATE
 `
 
 // GetNumpoolForUpdate retrieves the numpool row with the given id and locks it for update.
@@ -173,6 +174,7 @@ func (q *Queries) GetNumpoolForUpdate(ctx context.Context, id string) (Numpool, 
 		&i.MaxResourcesCount,
 		&i.ResourceUsageStatus,
 		&i.WaitQueue,
+		&i.Metadata,
 	)
 	return i, err
 }
