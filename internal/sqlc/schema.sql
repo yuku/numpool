@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS numpool (
+CREATE TABLE numpool (
   id VARCHAR(100) PRIMARY KEY,
   max_resources_count INT NOT NULL CHECK (max_resources_count BETWEEN 1 AND 64),
   resource_usage_status BIT(64) NOT NULL DEFAULT 0::BIT(64),

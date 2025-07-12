@@ -1,10 +1,12 @@
 // Command numpool provides CLI utilities for managing numpool database schema.
 //
 // Usage:
-//   numpool <command>
+//
+//	numpool <command>
 //
 // Commands:
-//   setup    Initialize the numpool database schema
+//
+//	setup    Initialize the numpool database schema
 //
 // The numpool command respects standard PostgreSQL environment variables:
 //   - DATABASE_URL: Full connection string (overrides all other variables)
@@ -15,14 +17,15 @@
 //   - PGDATABASE: Database name (default: postgres)
 //
 // Example:
-//   # Using DATABASE_URL
-//   DATABASE_URL=postgres://user:pass@host:5432/db numpool setup
 //
-//   # Using individual variables
-//   PGHOST=db.example.com PGUSER=myuser PGPASSWORD=mypass numpool setup
+//	# Using DATABASE_URL
+//	DATABASE_URL=postgres://user:pass@host:5432/db numpool setup
 //
-//   # Using defaults (connects to localhost:5432 as postgres user)
-//   numpool setup
+//	# Using individual variables
+//	PGHOST=db.example.com PGUSER=myuser PGPASSWORD=mypass numpool setup
+//
+//	# Using defaults (connects to localhost:5432 as postgres user)
+//	numpool setup
 package main
 
 import (

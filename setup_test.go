@@ -1,4 +1,4 @@
-package statedb_test
+package numpool_test
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"github.com/yuku/numpool"
 	"github.com/yuku/numpool/internal"
 	"github.com/yuku/numpool/internal/sqlc"
-	"github.com/yuku/numpool/internal/statedb"
 )
 
 func TestSetup(t *testing.T) {
@@ -25,7 +25,7 @@ func TestSetup(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = defaultConn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbname))
 	})
-	
+
 	// Connect to the new database directly
 	config := defaultConn.Config().Copy()
 	config.Database = dbname
@@ -34,20 +34,15 @@ func TestSetup(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close(ctx) })
 
 	// Given
-	q := sqlc.New(conn)
-	exists, err := q.DoesNumpoolTableExist(ctx)
-	require.NoError(t, err, "failed to check if numpool table exists")
-	if exists {
-		// If the table already exists, we can drop it to ensure a clean setup.
-		_, err = conn.Exec(ctx, "DROP TABLE IF EXISTS numpool")
-		require.NoError(t, err, "failed to drop numpool table before setup")
-	}
+	// If the table already exists, we can drop it to ensure a clean setup.
+	_, err = conn.Exec(ctx, "DROP TABLE IF EXISTS numpool")
+	require.NoError(t, err, "failed to drop numpool table before setup")
 
 	// When
-	require.NoError(t, statedb.Setup(ctx, conn))
+	require.NoError(t, numpool.Setup(ctx, conn))
 
 	// Then
-	exists, err = q.DoesNumpoolTableExist(ctx)
+	exists, err := sqlc.New(conn).DoesNumpoolTableExist(ctx)
 	require.NoError(t, err, "failed to check if numpool table exists after setup")
 	require.True(t, exists, "numpool table should exist after setup")
 }

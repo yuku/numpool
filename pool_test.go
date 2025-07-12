@@ -1,4 +1,4 @@
-package numpool
+package numpool_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"github.com/yuku/numpool"
 	"github.com/yuku/numpool/internal"
 	"github.com/yuku/numpool/internal/sqlc"
 )
@@ -27,7 +28,7 @@ func TestCreateOrOpen(t *testing.T) {
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 
 	// Create a new pool
-	pool, err := CreateOrOpen(ctx, Config{
+	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
 		Pool:              dbPool,
 		ID:                poolID,
 		MaxResourcesCount: 8,
@@ -43,7 +44,7 @@ func TestCreateOrOpen(t *testing.T) {
 	require.EqualValues(t, 8, row.MaxResourcesCount, "max resources count should match")
 
 	// Open the same pool again
-	pool2, err := CreateOrOpen(ctx, Config{
+	pool2, err := numpool.CreateOrOpen(ctx, numpool.Config{
 		Pool:              dbPool,
 		ID:                poolID,
 		MaxResourcesCount: 8,
@@ -53,7 +54,7 @@ func TestCreateOrOpen(t *testing.T) {
 	require.Equal(t, poolID, pool2.ID(), "opened pool ID should match original")
 
 	// Open the pool with a different MaxResourcesCount
-	_, err = CreateOrOpen(ctx, Config{
+	_, err = numpool.CreateOrOpen(ctx, numpool.Config{
 		Pool:              dbPool,
 		ID:                poolID,
 		MaxResourcesCount: 16,

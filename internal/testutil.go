@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yuku/numpool/internal/statedb"
+	"github.com/yuku/numpool"
 )
 
 // GetConnection returns a connection to the PostgreSQL database.
@@ -104,7 +104,7 @@ func SetupTestDatabase() {
 			_ = conn.Close(ctx)
 		}()
 
-		if err := statedb.Setup(ctx, conn); err != nil {
+		if err := numpool.Setup(ctx, conn); err != nil {
 			panic(fmt.Sprintf("failed to setup database: %v", err))
 		}
 	})

@@ -1,4 +1,4 @@
-package numpool
+package numpool_test
 
 import (
 	"os"
