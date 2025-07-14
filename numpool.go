@@ -1,80 +1,259 @@
-// Package numpool provides a distributed resource pool implementation backed by PostgreSQL.
-// It allows multiple processes to share a finite set of resources with automatic
-// blocking when resources are unavailable and fair distribution using a wait queue.
-//
-// The pool uses PostgreSQL's transactional guarantees and LISTEN/NOTIFY mechanism
-// to ensure safe concurrent access and efficient resource allocation across multiple
-// application instances.
-//
-// Setup:
-//
-// Before using numpool, you need to set up the required database table:
-//
-//	conn, err := pgx.Connect(ctx, databaseURL)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	defer conn.Close(ctx)
-//
-//	if err := numpool.Setup(ctx, conn); err != nil {
-//		log.Fatal(err)
-//	}
-//
-// Basic usage:
-//
-//	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-//		Pool:              dbPool,
-//		ID:                "my-resource-pool",
-//		MaxResourcesCount: 10,
-//	})
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	// Acquire a resource
-//	resource, err := pool.Acquire(ctx)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	defer resource.Close() // or defer resource.Release(ctx)
-//
-//	// Use the resource
-//	fmt.Printf("Using resource %d\n", resource.Index())
 package numpool
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/yuku/numpool/internal/numpool"
-	"github.com/yuku/numpool/internal/statedb"
+	"github.com/jackc/pgxlisten"
+	"github.com/yuku/numpool/internal/sqlc"
+	"github.com/yuku/numpool/internal/waitqueue"
 )
 
-// Pool represents a pool of resources that can be acquired and released.
-// This is a wrapper around the internal implementation.
-type Pool = numpool.Pool
+// Numpool represents a pool of resources that can be acquired and released.
+type Numpool struct {
+	id            string
+	manager       *Manager
+	listenHandler *waitqueue.ListenHandler
 
-// Resource represents a resource acquired from the pool.
-// This is a wrapper around the internal implementation.
-type Resource = numpool.Resource
-
-// Config holds the configuration for creating or opening a pool.
-type Config = numpool.Config
-
-// MaxResourcesLimit is the maximum number of resources that can be in a pool.
-// This limit is due to the bit representation used for tracking resource usage.
-const MaxResourcesLimit = numpool.MaxResourcesLimit
-
-// CreateOrOpen creates a new pool or opens an existing one based on the
-// provided configuration. If the pool already exists with a different
-// MaxResourcesCount, it returns an error.
-func CreateOrOpen(ctx context.Context, conf Config) (*Pool, error) {
-	return numpool.CreateOrOpen(ctx, conf)
+	mu        sync.Mutex // Protects access to the pool's resources
+	listening bool       // Indicates if the listener is currently active
 }
 
-// Setup initializes the numpool table in the database.
-// This function should be called once before using any pools.
-// It is safe to call multiple times as it will not recreate existing tables.
-func Setup(ctx context.Context, conn *pgx.Conn) error {
-	return statedb.Setup(ctx, conn)
+// ID returns the unique identifier of the pool.
+func (p *Numpool) ID() string {
+	return p.id
+}
+
+// Listen starts listening for notifications on the pool's channel.
+// It blocks until the context is cancelled or an fatal error occurs.
+func (p *Numpool) Listen(ctx context.Context) error {
+	if err := p.startListen(); err != nil {
+		return err
+	}
+	defer func() { p.listening = false }()
+
+	// Create listener for LISTEN/NOTIFY
+	listener := &pgxlisten.Listener{
+		Connect: func(ctx context.Context) (*pgx.Conn, error) {
+			config := p.manager.pool.Config().ConnConfig.Copy()
+			return pgx.ConnectConfig(ctx, config)
+		},
+	}
+	listener.Handle(p.channelName(), p.listenHandler)
+
+	if err := listener.Listen(ctx); err != nil {
+		// If the context is cancelled, we can ignore the error.
+		if errors.Is(err, context.Canceled) {
+			return nil // Listener was cancelled, nothing to do
+		}
+
+		// LISTEN/NOTIFY is critical for the current implementation.
+		// Without it, clients will block indefinitely waiting for resources.
+		//
+		// TODO: Implement polling as a fallback mechanism if LISTEN/NOTIFY fails.
+		// This would involve periodically checking for available resources
+		// instead of waiting for notifications.
+		return fmt.Errorf("listener failed: %v", err)
+	}
+
+	return nil // never reached
+}
+
+func (p *Numpool) startListen() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.listening {
+		return fmt.Errorf("listener for pool %s is already running", p.id)
+	}
+	p.listening = true
+	return nil
+}
+
+// Acquire acquires a resource from the pool.
+func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
+	tx, err := p.manager.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	queries := sqlc.New(tx)
+
+	// Get the pool with lock
+	model, err := queries.GetNumpoolForUpdate(ctx, p.id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get numpool with lock: %w", err)
+	}
+
+	if resourceIndex := model.FindUnusedResourceIndex(); resourceIndex != -1 {
+		// We can acquire a resource immediately
+		affected, err := queries.AcquireResource(ctx, sqlc.AcquireResourceParams{
+			ID:            p.id,
+			ResourceIndex: resourceIndex,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire resource: %w", err)
+		}
+		if affected == 0 {
+			return nil, fmt.Errorf("failed to acquire resource, it might be in use by another transaction")
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("failed to commit transaction after acquiring resource: %w", err)
+		}
+		return &Resource{
+			pool:  p,
+			index: resourceIndex,
+		}, nil
+	}
+
+	if !p.listening {
+		return nil, fmt.Errorf("listener is not running, cannot acquire resource")
+	}
+
+	waiterID := uuid.NewString()
+
+	err = queries.EnqueueWaitingClient(ctx, sqlc.EnqueueWaitingClientParams{
+		ID:       p.id,
+		WaiterID: waiterID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to enqueue waiting client: %w", err)
+	}
+
+	err = waitqueue.Wait(ctx, p.listenHandler,
+		waitqueue.WithID(waiterID),
+		waitqueue.WithAfterRegister(func() error {
+			// When we start waiting, commit the transaction and release the lock.
+			// This allows other clients to acquire the lock and potentially notify us.
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("failed to commit transaction after enqueuing waiting client: %w", err)
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		// Remove the client from the wait queue if we failed to wait.
+		// We use a new background context here because the original context might be cancelled.
+		if err := p.removeFromWaitQueue(context.Background(), waiterID); err != nil {
+			return nil, fmt.Errorf("failed to remove client from wait queue: %w", err)
+		}
+		return nil, fmt.Errorf("failed to wait for resource: %w", err)
+	}
+
+	// At this point, we are the first in the wait queue.
+	return p.acquireAsFirstInQueue(ctx, waiterID)
+}
+
+func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) error {
+	// Remove the client from the wait queue
+	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+		queries := sqlc.New(tx)
+		if _, err := queries.GetNumpoolForUpdate(ctx, p.id); err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+		return queries.RemoveFromWaitQueue(ctx, sqlc.RemoveFromWaitQueueParams{
+			ID:       p.id,
+			WaiterID: waiterID,
+		})
+	})
+}
+
+func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*Resource, error) {
+	var resourceIndex int
+
+	err := pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+		queries := sqlc.New(tx)
+
+		// Get the pool with lock
+		model, err := queries.GetNumpoolForUpdate(ctx, p.id)
+		if err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+
+		// Check if we are the first in the wait queue and if there are unused resources.
+		// Should never happen if we are using the wait queue correctly.
+		if len(model.WaitQueue) == 0 {
+			return fmt.Errorf("expected to be first in the wait queue, but no waiters found")
+		}
+		if model.WaitQueue[0] != waiterID {
+			return fmt.Errorf("not the first in the wait queue: expected %s, got %s", model.WaitQueue[0], waiterID)
+		}
+		resourceIndex = model.FindUnusedResourceIndex()
+		if resourceIndex == -1 {
+			return fmt.Errorf("no unused resources available")
+		}
+
+		affected, err := queries.AcquireResourceAndDequeueFirstWaiter(ctx, sqlc.AcquireResourceAndDequeueFirstWaiterParams{
+			ID:            p.id,
+			WaiterID:      waiterID,
+			ResourceIndex: int32(resourceIndex),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to acquire resource and dequeue first waiter: %w", err)
+		}
+		if affected == 0 {
+			// This should not happen with proper locking
+			return fmt.Errorf("failed to acquire resource, something went wrong")
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &Resource{
+		pool:  p,
+		index: resourceIndex,
+	}, nil
+}
+
+// release releases a resource back to the pool.
+func (p *Numpool) release(ctx context.Context, r *Resource) error {
+	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+
+		// Get the pool with lock
+		model, err := q.GetNumpoolForUpdate(ctx, p.id)
+		if err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+
+		affected, err := q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
+			ID:            p.id,
+			ResourceIndex: r.index,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to release resource: %w", err)
+		}
+		if affected == 0 {
+			return fmt.Errorf("resource was not in use")
+		}
+
+		if len(model.WaitQueue) == 0 {
+			// No waiters, nothing to notify
+			return nil
+		}
+
+		// Notify the first waiter in the queue
+		err = q.NotifyWaiters(ctx, sqlc.NotifyWaitersParams{
+			ChannelName: p.channelName(),
+			WaiterID:    model.WaitQueue[0],
+		})
+		if err != nil {
+			return fmt.Errorf("failed to notify waiting client: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func (p *Numpool) channelName() string {
+	// PostgreSQL channel names have a limit, so we use a shorter format
+	return fmt.Sprintf("np_%s", p.id)
 }

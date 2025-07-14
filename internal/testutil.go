@@ -4,19 +4,22 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yuku/numpool/internal/statedb"
+	"github.com/yuku/numpool"
 )
 
 // GetConnection returns a connection to the PostgreSQL database.
-// The returned connection must have full privileges to create databases and
-// manage the pool.
-func GetConnection(ctx context.Context) (*pgx.Conn, error) {
-	conn, err := pgx.Connect(ctx, getConnString())
+func GetConnection(ctx context.Context, dbnames ...string) (*pgx.Conn, error) {
+	if len(dbnames) == 0 {
+		dbnames = append(dbnames, getEnvOrDefault("PGDATABASE", "postgres")) // Default database
+	}
+	if len(dbnames) > 1 {
+		return nil, fmt.Errorf("only one database name is allowed, got %d", len(dbnames))
+	}
+	conn, err := pgx.Connect(ctx, getConnString(dbnames[0]))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -26,41 +29,44 @@ func GetConnection(ctx context.Context) (*pgx.Conn, error) {
 	return conn, nil
 }
 
-// MustGetConnection returns a connection to the PostgreSQL database and panics
-// if the connection cannot be established.
-func MustGetConnection(ctx context.Context) *pgx.Conn {
-	conn, err := GetConnection(ctx)
+func MustGetConnectionWithCleanup(t testing.TB, dbnames ...string) *pgx.Conn {
+	t.Helper()
+	conn, err := GetConnection(context.Background(), dbnames...)
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to get connection: %v", err)
 	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 	return conn
 }
 
-func MustGetConnectionWithCleanup(t *testing.T) *pgx.Conn {
-	t.Helper()
-	ctx := context.Background()
-	conn := MustGetConnection(ctx)
-	t.Cleanup(func() { _ = conn.Close(ctx) })
-	return conn
-}
-
-// MustGetPoolWithCleanup returns a connection pool to the PostgreSQL database
-// and automatically cleans it up when the test completes.
-func MustGetPoolWithCleanup(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, getConnString())
+func GetPool(ctx context.Context, dbnames ...string) (*pgxpool.Pool, error) {
+	if len(dbnames) == 0 {
+		dbnames = append(dbnames, getEnvOrDefault("PGDATABASE", "postgres")) // Default database
+	}
+	if len(dbnames) > 1 {
+		return nil, fmt.Errorf("only one database name is allowed, got %d", len(dbnames))
+	}
+	pool, err := pgxpool.New(ctx, getConnString(dbnames[0]))
 	if err != nil {
-		t.Fatalf("failed to create connection pool: %v", err)
+		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		t.Fatalf("failed to ping database: %v", err)
+		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-	t.Cleanup(func() { pool.Close() })
+	return pool, nil
+}
+
+func MustGetPoolWithCleanup(t testing.TB, dbnames ...string) *pgxpool.Pool {
+	t.Helper()
+	pool, err := GetPool(context.Background(), dbnames...)
+	if err != nil {
+		t.Fatalf("failed to get connection pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
 	return pool
 }
 
-func getConnString() string {
+func getConnString(database string) string {
 	if connStr := os.Getenv("DATABASE_URL"); connStr != "" {
 		return connStr
 	}
@@ -69,7 +75,6 @@ func getConnString() string {
 	port := getEnvOrDefault("PGPORT", "5432")
 	user := getEnvOrDefault("PGUSER", "postgres")
 	password := getEnvOrDefault("PGPASSWORD", "postgres")
-	database := getEnvOrDefault("PGDATABASE", "postgres")
 
 	if password != "" {
 		return fmt.Sprintf(
@@ -92,20 +97,31 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-var setupOnce sync.Once
-
 // SetupTestDatabase ensures the database schema is set up for tests.
-// It uses sync.Once to ensure it runs only once per process.
-func SetupTestDatabase() {
-	setupOnce.Do(func() {
-		ctx := context.Background()
-		conn := MustGetConnection(ctx)
-		defer func() {
-			_ = conn.Close(ctx)
-		}()
+func SetupTestDatabase(dbname string) error {
+	ctx := context.Background()
+	defaultPool, err := GetPool(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get connection pool: %w", err)
+	}
+	defer defaultPool.Close()
 
-		if err := statedb.Setup(ctx, conn); err != nil {
-			panic(fmt.Sprintf("failed to setup database: %v", err))
-		}
-	})
+	// Drop then recreate the numpool_internal_sqlc database to ensure a clean state.
+	_, err = defaultPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbname))
+	if err != nil {
+		return fmt.Errorf("failed to drop numpool_internal_sqlc database: %w", err)
+	}
+	_, err = defaultPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbname))
+	if err != nil {
+		return fmt.Errorf("failed to create numpool_internal_sqlc database: %w", err)
+	}
+
+	pool, err := GetPool(ctx, dbname)
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s database: %w", dbname, err)
+	}
+	if _, err = numpool.Setup(ctx, pool); err != nil {
+		return fmt.Errorf("failed to setup database: %w", err)
+	}
+	return nil
 }

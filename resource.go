@@ -7,7 +7,7 @@ import (
 
 // Resource represents a resource acquired from the pool.
 type Resource struct {
-	pool        *Pool
+	pool        *Numpool
 	index       int
 	releaseOnce sync.Once
 	releaseErr  error

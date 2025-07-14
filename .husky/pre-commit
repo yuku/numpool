@@ -11,5 +11,5 @@ fi
 echo "$ golangci-lint run"
 golangci-lint run
 
-echo "$ go test -timeout 10s -race ./..."
-go test -timeout 10s -race ./...
+echo "$ go test -timeout 10s -short -race ./..."
+go test -timeout 10s -short -race ./...
