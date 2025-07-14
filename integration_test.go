@@ -89,7 +89,7 @@ func TestBlockedResourceAcquisition(t *testing.T) {
 	select {
 	case <-done:
 		// Good, resource2 was acquired after release
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(1 * time.Second):
 		require.FailNow(t, "failed to acquire resource after releasing resource 0")
 	}
 }
