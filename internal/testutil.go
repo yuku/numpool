@@ -14,7 +14,7 @@ import (
 // GetConnection returns a connection to the PostgreSQL database.
 func GetConnection(ctx context.Context, dbnames ...string) (*pgx.Conn, error) {
 	if len(dbnames) == 0 {
-		dbnames = append(dbnames, getEnvOrDefault("PGPASSWORD", "postgres")) // Default database
+		dbnames = append(dbnames, getEnvOrDefault("PGDATABASE", "postgres")) // Default database
 	}
 	if len(dbnames) > 1 {
 		return nil, fmt.Errorf("only one database name is allowed, got %d", len(dbnames))
@@ -41,7 +41,7 @@ func MustGetConnectionWithCleanup(t testing.TB, dbnames ...string) *pgx.Conn {
 
 func GetPool(ctx context.Context, dbnames ...string) (*pgxpool.Pool, error) {
 	if len(dbnames) == 0 {
-		dbnames = append(dbnames, getEnvOrDefault("PGPASSWORD", "postgres")) // Default database
+		dbnames = append(dbnames, getEnvOrDefault("PGDATABASE", "postgres")) // Default database
 	}
 	if len(dbnames) > 1 {
 		return nil, fmt.Errorf("only one database name is allowed, got %d", len(dbnames))
@@ -75,7 +75,6 @@ func getConnString(database string) string {
 	port := getEnvOrDefault("PGPORT", "5432")
 	user := getEnvOrDefault("PGUSER", "postgres")
 	password := getEnvOrDefault("PGPASSWORD", "postgres")
-	// database := getEnvOrDefault("PGDATABASE", "postgres")
 
 	if password != "" {
 		return fmt.Sprintf(

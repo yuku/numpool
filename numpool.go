@@ -31,12 +31,9 @@ func (p *Numpool) ID() string {
 // Listen starts listening for notifications on the pool's channel.
 // It blocks until the context is cancelled or an fatal error occurs.
 func (p *Numpool) Listen(ctx context.Context) error {
-	p.mu.Lock()
-	if p.listening {
-		return fmt.Errorf("listener for pool %s is already running", p.id)
+	if err := p.startListen(); err != nil {
+		return err
 	}
-	p.listening = true
-	p.mu.Unlock()
 	defer func() { p.listening = false }()
 
 	// Create listener for LISTEN/NOTIFY
@@ -66,13 +63,15 @@ func (p *Numpool) Listen(ctx context.Context) error {
 	return nil // never reached
 }
 
-// Start starts the listener in a separate goroutine.
-func (p *Numpool) Start(ctx context.Context) {
-	go func() {
-		if err := p.Listen(ctx); err != nil {
-			panic(err)
-		}
-	}()
+func (p *Numpool) startListen() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.listening {
+		return fmt.Errorf("listener for pool %s is already running", p.id)
+	}
+	p.listening = true
+	return nil
 }
 
 // Acquire acquires a resource from the pool.

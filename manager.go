@@ -63,7 +63,7 @@ type Config struct {
 	MaxResourcesCount int32
 
 	// NoStartListening indicates whether the listener should be started automatically.
-	// If true, the caller must call Listen/Start explicitly. This is useful for
+	// If true, the caller must call Listen explicitly. This is useful for
 	// controlling when the listener starts and timeouts.
 	NoStartListening bool
 }
@@ -103,7 +103,12 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 		listenHandler: &waitqueue.ListenHandler{},
 	}
 	if !conf.NoStartListening {
-		resource.Start(ctx) // Start the listener in a separate goroutine
+		// Start listening in a separate goroutine
+		go func() {
+			if err := resource.Listen(ctx); err != nil {
+				panic(err)
+			}
+		}()
 	}
 
 	return resource, nil
