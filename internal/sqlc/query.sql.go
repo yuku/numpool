@@ -117,14 +117,17 @@ func (q *Queries) CreateNumpool(ctx context.Context, arg CreateNumpoolParams) er
 	return err
 }
 
-const deleteNumpool = `-- name: DeleteNumpool :exec
+const deleteNumpool = `-- name: DeleteNumpool :execrows
 DELETE FROM numpool WHERE id = $1
 `
 
 // DeleteNumpool deletes the numpool with the specified id.
-func (q *Queries) DeleteNumpool(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteNumpool, id)
-	return err
+func (q *Queries) DeleteNumpool(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNumpool, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const enqueueWaitingClient = `-- name: EnqueueWaitingClient :exec

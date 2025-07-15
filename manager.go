@@ -125,6 +125,19 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 	return resource, nil
 }
 
+// Delete removes a Numpool instance by its ID.
+// It returns true if the pool was deleted, false if it did not exist.
+func (m *Manager) Delete(ctx context.Context, id string) (bool, error) {
+	if id == "" {
+		return false, fmt.Errorf("pool ID cannot be empty")
+	}
+	affected, err := sqlc.New(m.pool).DeleteNumpool(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("failed to delete pool %s: %w", id, err)
+	}
+	return affected > 0, nil
+}
+
 func (m *Manager) createIfNotExists(ctx context.Context, conf Config) (json.RawMessage, error) {
 	var metadata json.RawMessage
 	err := pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {

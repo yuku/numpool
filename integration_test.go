@@ -918,7 +918,7 @@ func TestPoolDeletion(t *testing.T) {
 	require.NotNil(t, resource1, "resource should not be nil")
 
 	// Delete the pool from database
-	err = sqlc.New(internal.MustGetPoolWithCleanup(t)).DeleteNumpool(ctx, poolID)
+	_, err = sqlc.New(internal.MustGetPoolWithCleanup(t)).DeleteNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to delete pool")
 
 	// Try to acquire another resource - should fail

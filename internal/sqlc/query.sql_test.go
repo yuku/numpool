@@ -39,7 +39,7 @@ func TestCreateDeleteNumpool(t *testing.T) {
 	)
 
 	// When deleting the numpool
-	err = q.DeleteNumpool(ctx, poolID)
+	_, err = q.DeleteNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to delete numpool")
 
 	// Then check that the numpool no longer exists
@@ -59,7 +59,7 @@ func TestAcquireResource(t *testing.T) {
 		ID:                poolID,
 		MaxResourcesCount: 8,
 	})
-	t.Cleanup(func() { _ = q.DeleteNumpool(ctx, poolID) })
+	t.Cleanup(func() { _, _ = q.DeleteNumpool(ctx, poolID) })
 	require.NoError(t, err, "failed to create numpool")
 
 	row, err := q.GetNumpool(ctx, poolID)
@@ -129,7 +129,7 @@ func TestReleaseResource(t *testing.T) {
 		ID:                poolID,
 		MaxResourcesCount: 8,
 	})
-	t.Cleanup(func() { _ = q.DeleteNumpool(ctx, poolID) })
+	t.Cleanup(func() { _, _ = q.DeleteNumpool(ctx, poolID) })
 	require.NoError(t, err, "failed to create numpool")
 
 	// First acquire some resources
@@ -211,7 +211,7 @@ func TestRemoveFromWaitQueue(t *testing.T) {
 		ID:                poolID,
 		MaxResourcesCount: 1,
 	})
-	t.Cleanup(func() { _ = q.DeleteNumpool(ctx, poolID) })
+	t.Cleanup(func() { _, _ = q.DeleteNumpool(ctx, poolID) })
 	require.NoError(t, err, "failed to create numpool")
 
 	// Generate test UUIDs

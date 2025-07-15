@@ -28,7 +28,7 @@ SELECT EXISTS (
 INSERT INTO numpool (id, max_resources_count, metadata)
 VALUES ($1, $2, $3);
 
--- name: DeleteNumpool :exec
+-- name: DeleteNumpool :execrows
 -- DeleteNumpool deletes the numpool with the specified id.
 DELETE FROM numpool WHERE id = $1;
 

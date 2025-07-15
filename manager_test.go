@@ -167,7 +167,7 @@ func TestManager_GetOrCreate(t *testing.T) {
 			MaxResourcesCount: 5,
 			Metadata:          &Metadata{Name: "Test Pool"},
 		}
-		err := queries.DeleteNumpool(ctx, conf.ID)
+		_, err := queries.DeleteNumpool(ctx, conf.ID)
 		require.NoError(t, err, "DeleteNumpool should not return an error")
 
 		// When
@@ -263,7 +263,7 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 	// Delete any existing pools to ensure a clean start
 	for i := range m {
-		err := queries.DeleteNumpool(ctx, getTableName(i))
+		_, err := queries.DeleteNumpool(ctx, getTableName(i))
 		require.NoError(t, err, "DeleteNumpool should not return an error")
 	}
 
@@ -298,4 +298,50 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 		require.NoError(t, err, "CheckNumpoolExists should not return an error")
 		assert.True(t, exists, "Numpool should exist after concurrent GetOrCreate")
 	}
+}
+
+func TestManager_Delete(t *testing.T) {
+	ctx := context.Background()
+	pool := internal.MustGetPoolWithCleanup(t)
+	queries := sqlc.New(pool)
+
+	manager, err := numpool.Setup(ctx, pool)
+	require.NoError(t, err, "Setup should not return an error")
+
+	t.Run("deletes existing pool", func(t *testing.T) {
+		t.Parallel()
+
+		// Given
+		conf := numpool.Config{
+			ID:                t.Name(),
+			MaxResourcesCount: 5,
+		}
+		model, err := manager.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		assert.NotNil(t, model, "GetOrCreate should return a valid Numpool instance")
+
+		// When
+		deleted, err := manager.Delete(ctx, conf.ID)
+
+		// Then
+		assert.NoError(t, err, "Delete should not return an error")
+		assert.True(t, deleted, "Delete should return true for existing pool")
+		exists, err := queries.CheckNumpoolExists(ctx, conf.ID)
+		assert.NoError(t, err, "CheckNumpoolExists should not return an error after deletion")
+		assert.False(t, exists, "Numpool should not exist after deletion")
+	})
+
+	t.Run("returns error for non-existing pool", func(t *testing.T) {
+		t.Parallel()
+
+		// Given
+		confID := "non_existing_pool"
+
+		// When
+		deleted, err := manager.Delete(ctx, confID)
+
+		// Then
+		assert.NoError(t, err, "Delete should not return an error for non-existing pool")
+		assert.False(t, deleted, "Delete should return false for non-existing pool")
+	})
 }
