@@ -302,6 +302,13 @@ func (m *Numpool) UpdateMetadata(ctx context.Context, value any) error {
 		// Check if the current metadata in DB matches what we have in memory (optimistic locking)
 		// We need to compare semantically, not byte-wise, since JSON formatting can differ
 		if !jsonEqual(model.Metadata, m.metadata) {
+			// Another transaction has modified the metadata
+			// If it was modified to the same value we want to set, that's fine
+			if jsonEqual(model.Metadata, metadata) {
+				// Update our in-memory copy to match the database and return success
+				m.metadata = model.Metadata
+				return nil
+			}
 			return fmt.Errorf("metadata for pool %s has been modified by another transaction", m.id)
 		}
 

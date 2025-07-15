@@ -71,7 +71,9 @@ func TestBlockedResourceAcquisition(t *testing.T) {
 	require.Equal(t, 1, resource1.Index(), "second acquired resource should have index 1")
 
 	done := make(chan struct{})
+	started := make(chan struct{})
 	go func() {
+		close(started)                      // Signal that we're about to call Acquire
 		resource2, err := pool.Acquire(ctx) // This should block until resource0 is released
 		require.NoError(t, err, "failed to acquire resource after releasing")
 		require.NotNil(t, resource2, "acquired resource after release should not be nil")
@@ -79,8 +81,9 @@ func TestBlockedResourceAcquisition(t *testing.T) {
 		close(done)
 	}()
 
-	// Small delay to ensure we're in the Acquire call
-	time.Sleep(10 * time.Millisecond)
+	// Wait for the goroutine to start and give it more time to get into the Acquire call
+	<-started
+	time.Sleep(100 * time.Millisecond)
 
 	// Release the first resource
 	err = resource0.Release(ctx)
