@@ -28,6 +28,12 @@ SELECT EXISTS (
 INSERT INTO numpool (id, max_resources_count, metadata)
 VALUES ($1, $2, $3);
 
+-- name: UpdateNumpoolMetadata :exec
+-- UpdateNumpoolMetadata updates the metadata of the numpool with the specified id.
+UPDATE numpool
+SET metadata = $2
+WHERE id = $1;
+
 -- name: DeleteNumpool :execrows
 -- DeleteNumpool deletes the numpool with the specified id.
 DELETE FROM numpool WHERE id = $1;

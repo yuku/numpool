@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/google/uuid"
@@ -279,4 +280,65 @@ func (m *Numpool) Delete(ctx context.Context) error {
 		return fmt.Errorf("pool %s does not exist", m.id)
 	}
 	return nil
+}
+
+// UpdateMetadata updates the metadata of the Numpool instance.
+// It returns an error if the update fails or if the metadata has been modified by another transaction.
+func (m *Numpool) UpdateMetadata(ctx context.Context, value any) error {
+	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+
+		metadata, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+
+		// Get the pool with lock
+		model, err := q.GetNumpoolForUpdate(ctx, m.id)
+		if err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+
+		// Check if the current metadata in DB matches what we have in memory (optimistic locking)
+		// We need to compare semantically, not byte-wise, since JSON formatting can differ
+		if !jsonEqual(model.Metadata, m.metadata) {
+			return fmt.Errorf("metadata for pool %s has been modified by another transaction", m.id)
+		}
+
+		err = q.UpdateNumpoolMetadata(ctx, sqlc.UpdateNumpoolMetadataParams{
+			ID:       m.id,
+			Metadata: metadata,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update metadata: %w", err)
+		}
+
+		// Update the in-memory metadata to reflect the new value
+		m.metadata = metadata
+		return nil
+	})
+}
+
+// jsonEqual compares two JSON byte slices for semantic equality.
+// This handles cases where JSON formatting or key ordering differs.
+func jsonEqual(a, b json.RawMessage) bool {
+	// Handle nil cases
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Parse both JSON values
+	var va, vb any
+	if err := json.Unmarshal(a, &va); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &vb); err != nil {
+		return false
+	}
+
+	// Compare the parsed values
+	return reflect.DeepEqual(va, vb)
 }

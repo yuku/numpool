@@ -243,3 +243,20 @@ func (q *Queries) RemoveFromWaitQueue(ctx context.Context, arg RemoveFromWaitQue
 	_, err := q.db.Exec(ctx, removeFromWaitQueue, arg.ID, arg.WaiterID)
 	return err
 }
+
+const updateNumpoolMetadata = `-- name: UpdateNumpoolMetadata :exec
+UPDATE numpool
+SET metadata = $2
+WHERE id = $1
+`
+
+type UpdateNumpoolMetadataParams struct {
+	ID       string
+	Metadata []byte
+}
+
+// UpdateNumpoolMetadata updates the metadata of the numpool with the specified id.
+func (q *Queries) UpdateNumpoolMetadata(ctx context.Context, arg UpdateNumpoolMetadataParams) error {
+	_, err := q.db.Exec(ctx, updateNumpoolMetadata, arg.ID, arg.Metadata)
+	return err
+}
