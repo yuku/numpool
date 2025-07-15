@@ -2,6 +2,7 @@ package numpool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -15,7 +16,11 @@ import (
 
 // Numpool represents a pool of resources that can be acquired and released.
 type Numpool struct {
-	id            string
+	id string
+
+	// metadata is optional metadata associated with the pool.
+	metadata json.RawMessage
+
 	manager       *Manager
 	listenHandler *waitqueue.ListenHandler
 
@@ -26,6 +31,11 @@ type Numpool struct {
 // ID returns the unique identifier of the pool.
 func (p *Numpool) ID() string {
 	return p.id
+}
+
+// Metadata returns the metadata associated with the pool.
+func (p *Numpool) Metadata() json.RawMessage {
+	return p.metadata
 }
 
 // Listen starts listening for notifications on the pool's channel.

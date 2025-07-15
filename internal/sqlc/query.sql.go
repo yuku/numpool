@@ -101,18 +101,19 @@ func (q *Queries) CheckNumpoolTableExist(ctx context.Context) (bool, error) {
 }
 
 const createNumpool = `-- name: CreateNumpool :exec
-INSERT INTO numpool (id, max_resources_count)
-VALUES ($1, $2)
+INSERT INTO numpool (id, max_resources_count, metadata)
+VALUES ($1, $2, $3)
 `
 
 type CreateNumpoolParams struct {
 	ID                string
 	MaxResourcesCount int32
+	Metadata          []byte
 }
 
 // CreateNumpool creates a new numpool with the specified id and max_resources_count.
 func (q *Queries) CreateNumpool(ctx context.Context, arg CreateNumpoolParams) error {
-	_, err := q.db.Exec(ctx, createNumpool, arg.ID, arg.MaxResourcesCount)
+	_, err := q.db.Exec(ctx, createNumpool, arg.ID, arg.MaxResourcesCount, arg.Metadata)
 	return err
 }
 

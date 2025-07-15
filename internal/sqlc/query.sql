@@ -25,8 +25,8 @@ SELECT EXISTS (
 
 -- name: CreateNumpool :exec
 -- CreateNumpool creates a new numpool with the specified id and max_resources_count.
-INSERT INTO numpool (id, max_resources_count)
-VALUES ($1, $2);
+INSERT INTO numpool (id, max_resources_count, metadata)
+VALUES ($1, $2, $3);
 
 -- name: DeleteNumpool :exec
 -- DeleteNumpool deletes the numpool with the specified id.
