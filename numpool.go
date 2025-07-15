@@ -267,3 +267,16 @@ func (p *Numpool) channelName() string {
 	// PostgreSQL channel names have a limit, so we use a shorter format
 	return fmt.Sprintf("np_%s", p.id)
 }
+
+// Delete removes a Numpool instance by its ID.
+// It returns an error if the pool does not exist or if the deletion fails.
+func (m *Numpool) Delete(ctx context.Context) error {
+	affected, err := sqlc.New(m.manager.pool).DeleteNumpool(ctx, m.id)
+	if err != nil {
+		return fmt.Errorf("failed to delete pool %s: %w", m.id, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("pool %s does not exist", m.id)
+	}
+	return nil
+}
