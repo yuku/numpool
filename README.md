@@ -19,63 +19,40 @@ Key features:
 ## Installation
 
 ```bash
-# Library
 go get github.com/yuku/numpool
-
-# CLI tool
-go install github.com/yuku/numpool/cmd/numpool@latest
 ```
 
 ## Quick Start
 
 ### 1. Set up the database
 
-First, initialize the required database table. You can do this either via CLI or programmatically:
-
-#### Via CLI:
-
-```bash
-# Using go run
-go run github.com/yuku/numpool/cmd/numpool setup
-
-# Or install the binary first
-go install github.com/yuku/numpool/cmd/numpool@latest
-numpool setup
-```
-
-The CLI respects standard PostgreSQL environment variables:
-- `DATABASE_URL`: Full connection string
-- `PGHOST`: Database host (default: localhost)
-- `PGPORT`: Database port (default: 5432)
-- `PGUSER`: Database user (default: postgres)
-- `PGPASSWORD`: Database password
-- `PGDATABASE`: Database name (default: postgres)
-
-#### Programmatically:
+Initialize the required database table programmatically:
 
 ```go
 import (
     "context"
     "log"
     
-    "github.com/jackc/pgx/v5"
+    "github.com/jackc/pgx/v5/pgxpool"
     "github.com/yuku/numpool"
 )
 
 func main() {
     ctx := context.Background()
     
-    // Connect to PostgreSQL
-    conn, err := pgx.Connect(ctx, "postgres://user:password@localhost/dbname")
+    // Create a connection pool
+    dbPool, err := pgxpool.New(ctx, "postgres://user:password@localhost/dbname")
     if err != nil {
         log.Fatal(err)
     }
-    defer conn.Close(ctx)
+    defer dbPool.Close()
     
-    // Set up the numpool table
-    if err := numpool.Setup(ctx, conn); err != nil {
+    // Set up the numpool table and get a manager
+    manager, err := numpool.Setup(ctx, dbPool)
+    if err != nil {
         log.Fatal(err)
     }
+    defer manager.Close()
 }
 ```
 
@@ -101,9 +78,15 @@ func main() {
     }
     defer dbPool.Close()
     
-    // Create or open a resource pool
-    pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-        Pool:              dbPool,
+    // Set up the numpool table and get a manager
+    manager, err := numpool.Setup(ctx, dbPool)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer manager.Close()
+    
+    // Create or get a resource pool
+    pool, err := manager.GetOrCreate(ctx, numpool.Config{
         ID:                "my-resources",
         MaxResourcesCount: 10, // Allow up to 10 resources
     })
@@ -146,15 +129,43 @@ func main() {
 
 ```go
 type Config struct {
-    // Required: PostgreSQL connection pool
-    Pool *pgxpool.Pool
-    
     // Required: Unique identifier for this resource pool
     ID string
     
     // Required: Maximum number of resources (1-64)
     MaxResourcesCount int32
+    
+    // Optional: If true, prevents automatic listener startup.
+    // You must call Listen() manually when NoStartListening is true.
+    NoStartListening bool
 }
+```
+
+### Manager and Manual Listener Control
+
+For advanced use cases, you can control the listener manually:
+
+```go
+// Create a pool without starting the listener
+pool, err := manager.GetOrCreate(ctx, numpool.Config{
+    ID:                "my-resources",
+    MaxResourcesCount: 10,
+    NoStartListening:  true, // Prevents automatic listener startup
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+// Start the listener manually in a separate goroutine
+go func() {
+    if err := pool.Listen(ctx); err != nil {
+        log.Printf("Listener error: %v", err)
+    }
+}()
+
+// Now you can acquire resources as normal
+resource, err := pool.Acquire(ctx)
+// ... use resource
 ```
 
 ### Resource Methods
@@ -170,35 +181,6 @@ err := resource.Release(ctx)
 resource.Close()
 ```
 
-## CLI Tool
-
-numpool includes a CLI tool for database management tasks.
-
-### Installation
-
-```bash
-# Install the CLI tool
-go install github.com/yuku/numpool/cmd/numpool@latest
-```
-
-### Commands
-
-- `numpool setup` - Initialize the database schema
-
-### Environment Variables
-
-The CLI respects standard PostgreSQL environment variables:
-
-```bash
-# Using DATABASE_URL (highest priority)
-DATABASE_URL=postgres://user:pass@host:5432/db numpool setup
-
-# Using individual variables
-PGHOST=db.example.com PGUSER=myuser PGPASSWORD=mypass numpool setup
-
-# Using defaults (connects to localhost:5432 as postgres user)
-numpool setup
-```
 
 ## Testing
 
