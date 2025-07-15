@@ -23,7 +23,8 @@ func setupWithUniquePoolID(t *testing.T) (*numpool.Manager, string) {
 	t.Cleanup(manager.Close)
 
 	// Clean up any existing pool with the same ID
-	require.NoError(t, sqlc.New(dbPool).DeleteNumpool(ctx, poolID))
+	_, err = sqlc.New(dbPool).DeleteNumpool(ctx, poolID)
+	require.NoError(t, err)
 
 	return manager, poolID
 }

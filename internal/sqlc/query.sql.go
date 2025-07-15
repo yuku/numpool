@@ -101,29 +101,33 @@ func (q *Queries) CheckNumpoolTableExist(ctx context.Context) (bool, error) {
 }
 
 const createNumpool = `-- name: CreateNumpool :exec
-INSERT INTO numpool (id, max_resources_count)
-VALUES ($1, $2)
+INSERT INTO numpool (id, max_resources_count, metadata)
+VALUES ($1, $2, $3)
 `
 
 type CreateNumpoolParams struct {
 	ID                string
 	MaxResourcesCount int32
+	Metadata          []byte
 }
 
 // CreateNumpool creates a new numpool with the specified id and max_resources_count.
 func (q *Queries) CreateNumpool(ctx context.Context, arg CreateNumpoolParams) error {
-	_, err := q.db.Exec(ctx, createNumpool, arg.ID, arg.MaxResourcesCount)
+	_, err := q.db.Exec(ctx, createNumpool, arg.ID, arg.MaxResourcesCount, arg.Metadata)
 	return err
 }
 
-const deleteNumpool = `-- name: DeleteNumpool :exec
+const deleteNumpool = `-- name: DeleteNumpool :execrows
 DELETE FROM numpool WHERE id = $1
 `
 
 // DeleteNumpool deletes the numpool with the specified id.
-func (q *Queries) DeleteNumpool(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteNumpool, id)
-	return err
+func (q *Queries) DeleteNumpool(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNumpool, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const enqueueWaitingClient = `-- name: EnqueueWaitingClient :exec
@@ -144,7 +148,7 @@ func (q *Queries) EnqueueWaitingClient(ctx context.Context, arg EnqueueWaitingCl
 }
 
 const getNumpool = `-- name: GetNumpool :one
-SELECT id, max_resources_count, resource_usage_status, wait_queue FROM numpool WHERE id = $1
+SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpool WHERE id = $1
 `
 
 // GetNumpoolForUpdate retrieves the numpool row with the given id without locking it.
@@ -156,12 +160,13 @@ func (q *Queries) GetNumpool(ctx context.Context, id string) (Numpool, error) {
 		&i.MaxResourcesCount,
 		&i.ResourceUsageStatus,
 		&i.WaitQueue,
+		&i.Metadata,
 	)
 	return i, err
 }
 
 const getNumpoolForUpdate = `-- name: GetNumpoolForUpdate :one
-SELECT id, max_resources_count, resource_usage_status, wait_queue FROM numpool WHERE id = $1 FOR UPDATE
+SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpool WHERE id = $1 FOR UPDATE
 `
 
 // GetNumpoolForUpdate retrieves the numpool row with the given id and locks it for update.
@@ -173,6 +178,7 @@ func (q *Queries) GetNumpoolForUpdate(ctx context.Context, id string) (Numpool, 
 		&i.MaxResourcesCount,
 		&i.ResourceUsageStatus,
 		&i.WaitQueue,
+		&i.Metadata,
 	)
 	return i, err
 }
@@ -235,5 +241,22 @@ type RemoveFromWaitQueueParams struct {
 // RemoveFromWaitQueue removes a specific waiter UUID from the wait queue.
 func (q *Queries) RemoveFromWaitQueue(ctx context.Context, arg RemoveFromWaitQueueParams) error {
 	_, err := q.db.Exec(ctx, removeFromWaitQueue, arg.ID, arg.WaiterID)
+	return err
+}
+
+const updateNumpoolMetadata = `-- name: UpdateNumpoolMetadata :exec
+UPDATE numpool
+SET metadata = $2
+WHERE id = $1
+`
+
+type UpdateNumpoolMetadataParams struct {
+	ID       string
+	Metadata []byte
+}
+
+// UpdateNumpoolMetadata updates the metadata of the numpool with the specified id.
+func (q *Queries) UpdateNumpoolMetadata(ctx context.Context, arg UpdateNumpoolMetadataParams) error {
+	_, err := q.db.Exec(ctx, updateNumpoolMetadata, arg.ID, arg.Metadata)
 	return err
 }

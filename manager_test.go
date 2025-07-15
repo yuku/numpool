@@ -2,6 +2,7 @@ package numpool_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"sync"
@@ -158,11 +159,15 @@ func TestManager_GetOrCreate(t *testing.T) {
 		t.Parallel()
 
 		// Given
+		type Metadata struct {
+			Name string
+		}
 		conf := numpool.Config{
 			ID:                t.Name(),
 			MaxResourcesCount: 5,
+			Metadata:          &Metadata{Name: "Test Pool"},
 		}
-		err := queries.DeleteNumpool(ctx, conf.ID)
+		_, err := queries.DeleteNumpool(ctx, conf.ID)
 		require.NoError(t, err, "DeleteNumpool should not return an error")
 
 		// When
@@ -176,18 +181,32 @@ func TestManager_GetOrCreate(t *testing.T) {
 		exists, err := queries.CheckNumpoolExists(ctx, conf.ID)
 		assert.NoError(t, err, "CheckNumpoolExists should not return an error after creation")
 		assert.True(t, exists, "record should exist after creation")
+		var metadata Metadata
+		err = json.Unmarshal(model.Metadata(), &metadata)
+		if assert.NoError(t, err, "Unmarshal should not return an error for metadata") {
+			assert.Equal(t, "Test Pool", metadata.Name, "Metadata should match the configuration")
+		}
 
 		t.Run("returns existing pool if it already exists", func(t *testing.T) {
 			t.Parallel()
 
 			// When
-			newModel, err := manager.GetOrCreate(ctx, conf)
+			newModel, err := manager.GetOrCreate(ctx, numpool.Config{
+				ID:                conf.ID,
+				MaxResourcesCount: conf.MaxResourcesCount,
+				Metadata:          &Metadata{Name: "Modified"},
+			})
 
 			// Then
 			assert.NoError(t, err, "GetOrCreate should not return an error for existing pool")
 			if assert.NotNil(t, newModel, "GetOrCreate should return a valid Numpool instance") {
 				assert.Equal(t, conf.ID, newModel.ID(), "Existing pool ID should match the created pool ID")
 				assert.NotSame(t, model, newModel, "should return a new instance for existing pool")
+			}
+			var metadata Metadata
+			err = json.Unmarshal(model.Metadata(), &metadata)
+			if assert.NoError(t, err, "Unmarshal should not return an error for metadata") {
+				assert.Equal(t, "Test Pool", metadata.Name, "Metadata should not change for existing pool")
 			}
 		})
 
@@ -244,7 +263,7 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 	// Delete any existing pools to ensure a clean start
 	for i := range m {
-		err := queries.DeleteNumpool(ctx, getTableName(i))
+		_, err := queries.DeleteNumpool(ctx, getTableName(i))
 		require.NoError(t, err, "DeleteNumpool should not return an error")
 	}
 

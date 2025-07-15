@@ -15,6 +15,7 @@ Key features:
 - **Automatic cleanup**: Resources are released on process termination
 - **PostgreSQL-backed**: Leverages PostgreSQL's ACID properties
 - **LISTEN/NOTIFY**: Efficient blocking without polling
+- **Metadata support**: Store JSON metadata with each pool
 
 ## Installation
 
@@ -89,6 +90,7 @@ func main() {
     pool, err := manager.GetOrCreate(ctx, numpool.Config{
         ID:                "my-resources",
         MaxResourcesCount: 10, // Allow up to 10 resources
+        Metadata:          map[string]string{"description": "API rate limiter"},
     })
     if err != nil {
         log.Fatal(err)
@@ -102,7 +104,10 @@ func main() {
     defer resource.Close() // Always release when done
     
     // Use the resource
-    fmt.Printf("Got resource #%d\n", resource.Index())
+    fmt.Printf("Got resource #%d from pool: %s\n", resource.Index(), pool.ID())
+    
+    // Access pool metadata
+    fmt.Printf("Pool metadata: %s\n", pool.Metadata())
     
     // Do work with the resource...
 }
@@ -135,6 +140,10 @@ type Config struct {
     // Required: Maximum number of resources (1-64)
     MaxResourcesCount int32
     
+    // Optional: JSON metadata associated with the pool.
+    // Set only during pool creation, ignored for existing pools.
+    Metadata any
+    
     // Optional: If true, prevents automatic listener startup.
     // You must call Listen() manually when NoStartListening is true.
     NoStartListening bool
@@ -166,6 +175,19 @@ go func() {
 // Now you can acquire resources as normal
 resource, err := pool.Acquire(ctx)
 // ... use resource
+```
+
+### Pool Methods
+
+```go
+// Get the pool ID
+id := pool.ID()
+
+// Get the pool metadata as JSON
+metadata := pool.Metadata()
+
+// Delete the pool (returns error if pool doesn't exist)
+err := pool.Delete(ctx)
 ```
 
 ### Resource Methods

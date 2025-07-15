@@ -2,6 +2,7 @@ package numpool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -60,7 +61,15 @@ type Config struct {
 
 	// MaxResourcesCount is the maximum number of resources that can be in the pool.
 	// It must be between 1 and MaxResourcesLimit (inclusive).
+	// If the pool already exists with a different MaxResourcesCount,
+	// an error will be returned.
 	MaxResourcesCount int32
+
+	// Metadata is optional JSON metadata associated with the pool.
+	// It can be used to store additional information about the pool.
+	// It is not used by the library itself, but can be useful for clients.
+	// If the pool already exists, this field will be ignored.
+	Metadata any
 
 	// NoStartListening indicates whether the listener should be started automatically.
 	// If true, the caller must call Listen explicitly. This is useful for
@@ -93,12 +102,14 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 		return nil, fmt.Errorf("invalid pool configuration: %w", err)
 	}
 
-	if err := m.createIfNotExists(ctx, conf); err != nil {
+	metadata, err := m.createIfNotExists(ctx, conf)
+	if err != nil {
 		return nil, fmt.Errorf("failed to create: %w", err)
 	}
 
 	resource := &Numpool{
 		id:            conf.ID,
+		metadata:      metadata,
 		manager:       m,
 		listenHandler: &waitqueue.ListenHandler{},
 	}
@@ -114,8 +125,9 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 	return resource, nil
 }
 
-func (m *Manager) createIfNotExists(ctx context.Context, conf Config) error {
-	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
+func (m *Manager) createIfNotExists(ctx context.Context, conf Config) (json.RawMessage, error) {
+	var metadata json.RawMessage
+	err := pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 		if err := q.LockNumpoolTableInShareMode(ctx); err != nil {
 			return fmt.Errorf("failed to lock numpool table in share mode: %w", err)
@@ -128,17 +140,29 @@ func (m *Manager) createIfNotExists(ctx context.Context, conf Config) error {
 					conf.ID, m.MaxResourcesCount, conf.MaxResourcesCount,
 				)
 			}
+			metadata = m.Metadata
 			return nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("failed to get numpool: %w", err)
 		}
 		// Pool does not exist, create it
+		if conf.Metadata != nil {
+			metadata, err = json.Marshal(conf.Metadata)
+			if err != nil {
+				return fmt.Errorf("failed to marshal metadata: %w", err)
+			}
+		}
 		return q.CreateNumpool(ctx, sqlc.CreateNumpoolParams{
 			ID:                conf.ID,
 			MaxResourcesCount: conf.MaxResourcesCount,
+			Metadata:          metadata,
 		})
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create numpool: %w", err)
+	}
+	return metadata, nil
 }
 
 func (m *Manager) Close() {

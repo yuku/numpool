@@ -24,4 +24,8 @@ type Numpool struct {
 	ResourceUsageStatus pgtype.Bits
 	// WaitQueue is a list of client ids waiting for the numpool.
 	WaitQueue []string
+	// Metadata is a JSONB field that can store additional information about the numpool.
+	// It can be used to store any additional data that is relevant to the numpool, such as
+	// configuration settings, descriptions, or other metadata that does not fit into the other fields.
+	Metadata []byte
 }

@@ -2,8 +2,10 @@ package numpool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/google/uuid"
@@ -15,7 +17,11 @@ import (
 
 // Numpool represents a pool of resources that can be acquired and released.
 type Numpool struct {
-	id            string
+	id string
+
+	// metadata is optional metadata associated with the pool.
+	metadata json.RawMessage
+
 	manager       *Manager
 	listenHandler *waitqueue.ListenHandler
 
@@ -26,6 +32,11 @@ type Numpool struct {
 // ID returns the unique identifier of the pool.
 func (p *Numpool) ID() string {
 	return p.id
+}
+
+// Metadata returns the metadata associated with the pool.
+func (p *Numpool) Metadata() json.RawMessage {
+	return p.metadata
 }
 
 // Listen starts listening for notifications on the pool's channel.
@@ -256,4 +267,85 @@ func (p *Numpool) release(ctx context.Context, r *Resource) error {
 func (p *Numpool) channelName() string {
 	// PostgreSQL channel names have a limit, so we use a shorter format
 	return fmt.Sprintf("np_%s", p.id)
+}
+
+// Delete removes a Numpool instance by its ID.
+// It returns an error if the pool does not exist or if the deletion fails.
+func (m *Numpool) Delete(ctx context.Context) error {
+	affected, err := sqlc.New(m.manager.pool).DeleteNumpool(ctx, m.id)
+	if err != nil {
+		return fmt.Errorf("failed to delete pool %s: %w", m.id, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("pool %s does not exist", m.id)
+	}
+	return nil
+}
+
+// UpdateMetadata updates the metadata of the Numpool instance.
+// It returns an error if the update fails or if the metadata has been modified by another transaction.
+func (m *Numpool) UpdateMetadata(ctx context.Context, value any) error {
+	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+
+		metadata, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+
+		// Get the pool with lock
+		model, err := q.GetNumpoolForUpdate(ctx, m.id)
+		if err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+
+		// Check if the current metadata in DB matches what we have in memory (optimistic locking)
+		// We need to compare semantically, not byte-wise, since JSON formatting can differ
+		if !jsonEqual(model.Metadata, m.metadata) {
+			// Another transaction has modified the metadata
+			// If it was modified to the same value we want to set, that's fine
+			if jsonEqual(model.Metadata, metadata) {
+				// Update our in-memory copy to match the database and return success
+				m.metadata = model.Metadata
+				return nil
+			}
+			return fmt.Errorf("metadata for pool %s has been modified by another transaction", m.id)
+		}
+
+		err = q.UpdateNumpoolMetadata(ctx, sqlc.UpdateNumpoolMetadataParams{
+			ID:       m.id,
+			Metadata: metadata,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update metadata: %w", err)
+		}
+
+		// Update the in-memory metadata to reflect the new value
+		m.metadata = metadata
+		return nil
+	})
+}
+
+// jsonEqual compares two JSON byte slices for semantic equality.
+// This handles cases where JSON formatting or key ordering differs.
+func jsonEqual(a, b json.RawMessage) bool {
+	// Handle nil cases
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Parse both JSON values
+	var va, vb any
+	if err := json.Unmarshal(a, &va); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &vb); err != nil {
+		return false
+	}
+
+	// Compare the parsed values
+	return reflect.DeepEqual(va, vb)
 }
