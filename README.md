@@ -1,6 +1,7 @@
 # numpool
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/yuku/numpool.svg)](https://pkg.go.dev/github.com/yuku/numpool)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yuku/numpool)
 
 A distributed resource pool implementation backed by PostgreSQL for Go applications.
 
