@@ -78,7 +78,9 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 
 		// When - update metadata
 		newMetadata := map[string]string{"version": "2.0", "description": "updated"}
-		err = model.UpdateMetadata(ctx, newMetadata)
+		newMetadataBytes, err := json.Marshal(newMetadata)
+		require.NoError(t, err, "JSON marshal should not fail")
+		err = model.UpdateMetadata(ctx, newMetadataBytes)
 
 		// Then
 		assert.NoError(t, err, "UpdateMetadata should not return an error")
@@ -115,7 +117,9 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		require.NoError(t, err, "Delete should not return an error")
 
 		// When - try to update metadata of deleted pool
-		err = model.UpdateMetadata(ctx, map[string]string{"key": "value"})
+		metadataBytes, err := json.Marshal(map[string]string{"key": "value"})
+		require.NoError(t, err, "JSON marshal should not fail")
+		err = model.UpdateMetadata(ctx, metadataBytes)
 
 		// Then
 		assert.Error(t, err, "UpdateMetadata should return an error for deleted pool")
@@ -132,14 +136,13 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		require.NoError(t, err, "GetOrCreate should not return an error")
 		t.Cleanup(func() { _ = model.Delete(ctx) })
 
-		// When - try to update with invalid metadata (circular reference)
-		invalidData := make(map[string]any)
-		invalidData["self"] = invalidData // Creates circular reference
-		err = model.UpdateMetadata(ctx, invalidData)
+		// When - try to update with invalid JSON
+		// Use invalid JSON directly since we can't marshal circular references
+		err = model.UpdateMetadata(ctx, json.RawMessage(`{invalid json}`))
 
 		// Then
-		assert.Error(t, err, "UpdateMetadata should return an error for invalid metadata")
-		assert.Contains(t, err.Error(), "failed to marshal metadata", "Error should indicate marshaling failure")
+		assert.Error(t, err, "UpdateMetadata should return an error for invalid JSON")
+		// The error will come from database operations or JSON comparison, not marshaling
 	})
 
 	t.Run("handles nil metadata", func(t *testing.T) {
@@ -172,7 +175,9 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 
 		// When - update with empty map
 		emptyMap := make(map[string]string)
-		err = model.UpdateMetadata(ctx, emptyMap)
+		emptyMapBytes, err := json.Marshal(emptyMap)
+		require.NoError(t, err, "JSON marshal should not fail")
+		err = model.UpdateMetadata(ctx, emptyMapBytes)
 
 		// Then
 		assert.NoError(t, err, "UpdateMetadata should handle empty metadata")
@@ -205,11 +210,13 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 
 		// When - model1 updates metadata first
 		newMetadata := map[string]string{"version": "2.0", "updated": "true"}
-		err = model1.UpdateMetadata(ctx, newMetadata)
+		newMetadataBytes, err := json.Marshal(newMetadata)
+		require.NoError(t, err, "JSON marshal should not fail")
+		err = model1.UpdateMetadata(ctx, newMetadataBytes)
 		require.NoError(t, err, "First update should succeed")
 
 		// Then - model2 tries to update to the same value (should succeed)
-		err = model2.UpdateMetadata(ctx, newMetadata)
+		err = model2.UpdateMetadata(ctx, newMetadataBytes)
 		assert.NoError(t, err, "Second update to same value should succeed")
 
 		// Verify both instances have the correct metadata
@@ -246,12 +253,16 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 
 		// When - model1 updates metadata first
 		metadata1 := map[string]string{"version": "2.0", "updated_by": "model1"}
-		err = model1.UpdateMetadata(ctx, metadata1)
+		metadata1Bytes, err := json.Marshal(metadata1)
+		require.NoError(t, err, "JSON marshal should not fail")
+		err = model1.UpdateMetadata(ctx, metadata1Bytes)
 		require.NoError(t, err, "First update should succeed")
 
 		// Then - model2 tries to update to a different value (should fail)
 		metadata2 := map[string]string{"version": "3.0", "updated_by": "model2"}
-		err = model2.UpdateMetadata(ctx, metadata2)
+		metadata2Bytes, err := json.Marshal(metadata2)
+		require.NoError(t, err, "JSON marshal should not fail")
+		err = model2.UpdateMetadata(ctx, metadata2Bytes)
 		assert.Error(t, err, "Second update to different value should fail")
 		assert.Contains(t, err.Error(), "has been modified by another transaction", "Error should indicate concurrent modification")
 
