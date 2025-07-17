@@ -284,14 +284,10 @@ func (m *Numpool) Delete(ctx context.Context) error {
 
 // UpdateMetadata updates the metadata of the Numpool instance.
 // It returns an error if the update fails or if the metadata has been modified by another transaction.
-func (m *Numpool) UpdateMetadata(ctx context.Context, value any) error {
+// Pass nil to set the metadata to null in the database.
+func (m *Numpool) UpdateMetadata(ctx context.Context, metadata json.RawMessage) error {
 	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
-
-		metadata, err := json.Marshal(value)
-		if err != nil {
-			return fmt.Errorf("failed to marshal metadata: %w", err)
-		}
 
 		// Get the pool with lock
 		model, err := q.GetNumpoolForUpdate(ctx, m.id)

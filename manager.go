@@ -69,7 +69,7 @@ type Config struct {
 	// It can be used to store additional information about the pool.
 	// It is not used by the library itself, but can be useful for clients.
 	// If the pool already exists, this field will be ignored.
-	Metadata any
+	Metadata json.RawMessage
 
 	// NoStartListening indicates whether the listener should be started automatically.
 	// If true, the caller must call Listen explicitly. This is useful for
@@ -148,10 +148,7 @@ func (m *Manager) createIfNotExists(ctx context.Context, conf Config) (json.RawM
 		}
 		// Pool does not exist, create it
 		if conf.Metadata != nil {
-			metadata, err = json.Marshal(conf.Metadata)
-			if err != nil {
-				return fmt.Errorf("failed to marshal metadata: %w", err)
-			}
+			metadata = conf.Metadata
 		}
 		return q.CreateNumpool(ctx, sqlc.CreateNumpoolParams{
 			ID:                conf.ID,
