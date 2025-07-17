@@ -63,6 +63,7 @@ func main() {
 ```go
 import (
     "context"
+    "encoding/json"
     "fmt"
     "log"
     
@@ -88,10 +89,11 @@ func main() {
     defer manager.Close()
     
     // Create or get a resource pool
+    metadataBytes, _ := json.Marshal(map[string]string{"description": "API rate limiter"})
     pool, err := manager.GetOrCreate(ctx, numpool.Config{
         ID:                "my-resources",
         MaxResourcesCount: 10, // Allow up to 10 resources
-        Metadata:          map[string]string{"description": "API rate limiter"},
+        Metadata:          metadataBytes,
     })
     if err != nil {
         log.Fatal(err)
@@ -144,7 +146,8 @@ type Config struct {
     
     // Optional: JSON metadata associated with the pool.
     // Set only during pool creation, ignored for existing pools.
-    Metadata any
+    // Must be valid JSON bytes (json.RawMessage).
+    Metadata json.RawMessage
     
     // Optional: If true, prevents automatic listener startup.
     // You must call Listen() manually when NoStartListening is true.
@@ -189,10 +192,11 @@ id := pool.ID()
 metadata := pool.Metadata()
 
 // Update the pool metadata (uses optimistic locking)
-err := pool.UpdateMetadata(ctx, map[string]string{
+metadataBytes, _ := json.Marshal(map[string]string{
     "version": "2.0",
     "updated": "2024-01-01",
 })
+err := pool.UpdateMetadata(ctx, metadataBytes)
 
 // Delete the pool (returns error if pool doesn't exist)
 err := pool.Delete(ctx)
@@ -219,15 +223,16 @@ numpool supports optional JSON metadata that can be associated with each pool. T
 
 ```go
 // Create a pool with initial metadata
+metadataBytes, _ := json.Marshal(map[string]any{
+    "description": "Rate limiter for external API calls",
+    "rate_limit":  1000,
+    "created_by":  "api-service",
+    "tags":        []string{"production", "api", "rate-limiting"},
+})
 pool, err := manager.GetOrCreate(ctx, numpool.Config{
     ID:                "api-limiter",
     MaxResourcesCount: 100,
-    Metadata: map[string]any{
-        "description": "Rate limiter for external API calls",
-        "rate_limit":  1000,
-        "created_by":  "api-service",
-        "tags":        []string{"production", "api", "rate-limiting"},
-    },
+    Metadata:          metadataBytes,
 })
 ```
 
@@ -268,7 +273,8 @@ newConfig := map[string]any{
     "updated_at":  time.Now(),
 }
 
-err := pool.UpdateMetadata(ctx, newConfig)
+metadataBytes, _ := json.Marshal(newConfig)
+err := pool.UpdateMetadata(ctx, metadataBytes)
 if err != nil {
     // Handle error - might be due to concurrent modification
     log.Printf("Failed to update metadata: %v", err)
@@ -277,10 +283,12 @@ if err != nil {
 
 ### Metadata Behavior
 
+- **Type Safety**: Metadata must be provided as `json.RawMessage` (valid JSON bytes), ensuring type safety and preventing marshaling errors.
 - **Creation**: Metadata is set only when creating a new pool. If a pool already exists, the metadata parameter in `Config` is ignored.
 - **Concurrent Updates**: Uses optimistic locking to detect concurrent modifications. If another transaction updates metadata to the same value you're trying to set, the operation succeeds (idempotent).
 - **JSON Storage**: Metadata is stored as JSONB in PostgreSQL, allowing for efficient queries and indexing.
 - **Null Handling**: Pools can have null metadata, which is returned as `nil` from the `Metadata()` method.
+- **Validation**: The `UpdateMetadata` method validates that metadata is not nil and returns an error if nil is passed.
 
 ## Testing
 
