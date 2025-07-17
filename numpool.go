@@ -285,13 +285,13 @@ func (m *Numpool) Delete(ctx context.Context) error {
 // UpdateMetadata updates the metadata of the Numpool instance.
 // It returns an error if the update fails or if the metadata has been modified by another transaction.
 func (m *Numpool) UpdateMetadata(ctx context.Context, metadata json.RawMessage) error {
+	// Validate metadata is not nil
+	if metadata == nil {
+		return fmt.Errorf("metadata cannot be nil")
+	}
+
 	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
-
-		// Convert nil to JSON null representation
-		if metadata == nil {
-			metadata = json.RawMessage("null")
-		}
 
 		// Get the pool with lock
 		model, err := q.GetNumpoolForUpdate(ctx, m.id)

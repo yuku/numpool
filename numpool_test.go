@@ -145,7 +145,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		// The error will come from database operations or JSON comparison, not marshaling
 	})
 
-	t.Run("handles nil metadata", func(t *testing.T) {
+	t.Run("returns error for nil metadata", func(t *testing.T) {
 		// Given
 		conf := numpool.Config{
 			ID:                t.Name(),
@@ -155,12 +155,12 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		require.NoError(t, err, "GetOrCreate should not return an error")
 		t.Cleanup(func() { _ = model.Delete(ctx) })
 
-		// When - update with nil metadata
+		// When - try to update with nil metadata
 		err = model.UpdateMetadata(ctx, nil)
 
 		// Then
-		assert.NoError(t, err, "UpdateMetadata should handle nil metadata")
-		assert.Equal(t, json.RawMessage("null"), model.Metadata(), "Metadata should be null JSON")
+		assert.Error(t, err, "UpdateMetadata should return error for nil metadata")
+		assert.Contains(t, err.Error(), "metadata cannot be nil", "Error should indicate nil metadata is not allowed")
 	})
 
 	t.Run("handles empty metadata", func(t *testing.T) {
