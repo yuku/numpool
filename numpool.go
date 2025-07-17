@@ -284,12 +284,8 @@ func (m *Numpool) Delete(ctx context.Context) error {
 
 // UpdateMetadata updates the metadata of the Numpool instance.
 // It returns an error if the update fails or if the metadata has been modified by another transaction.
+// Pass nil to set the metadata to null in the database.
 func (m *Numpool) UpdateMetadata(ctx context.Context, metadata json.RawMessage) error {
-	// Validate metadata is not nil
-	if metadata == nil {
-		return fmt.Errorf("metadata cannot be nil")
-	}
-
 	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 

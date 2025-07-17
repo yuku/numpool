@@ -279,6 +279,12 @@ if err != nil {
     // Handle error - might be due to concurrent modification
     log.Printf("Failed to update metadata: %v", err)
 }
+
+// To clear metadata (set to null in database)
+err = pool.UpdateMetadata(ctx, nil)
+if err != nil {
+    log.Printf("Failed to clear metadata: %v", err)
+}
 ```
 
 ### Metadata Behavior
@@ -288,7 +294,7 @@ if err != nil {
 - **Concurrent Updates**: Uses optimistic locking to detect concurrent modifications. If another transaction updates metadata to the same value you're trying to set, the operation succeeds (idempotent).
 - **JSON Storage**: Metadata is stored as JSONB in PostgreSQL, allowing for efficient queries and indexing.
 - **Null Handling**: Pools can have null metadata, which is returned as `nil` from the `Metadata()` method.
-- **Validation**: The `UpdateMetadata` method validates that metadata is not nil and returns an error if nil is passed.
+- **Nil Support**: The `UpdateMetadata` method accepts nil to set metadata to null in the database.
 
 ## Testing
 
