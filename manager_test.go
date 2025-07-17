@@ -162,12 +162,14 @@ func TestManager_GetOrCreate(t *testing.T) {
 		type Metadata struct {
 			Name string
 		}
+		metadataBytes, err := json.Marshal(&Metadata{Name: "Test Pool"})
+		require.NoError(t, err, "JSON marshal should not fail")
 		conf := numpool.Config{
 			ID:                t.Name(),
 			MaxResourcesCount: 5,
-			Metadata:          &Metadata{Name: "Test Pool"},
+			Metadata:          metadataBytes,
 		}
-		_, err := queries.DeleteNumpool(ctx, conf.ID)
+		_, err = queries.DeleteNumpool(ctx, conf.ID)
 		require.NoError(t, err, "DeleteNumpool should not return an error")
 
 		// When
@@ -191,10 +193,12 @@ func TestManager_GetOrCreate(t *testing.T) {
 			t.Parallel()
 
 			// When
+			modifiedMetadataBytes, err2 := json.Marshal(&Metadata{Name: "Modified"})
+			require.NoError(t, err2, "JSON marshal should not fail")
 			newModel, err := manager.GetOrCreate(ctx, numpool.Config{
 				ID:                conf.ID,
 				MaxResourcesCount: conf.MaxResourcesCount,
-				Metadata:          &Metadata{Name: "Modified"},
+				Metadata:          modifiedMetadataBytes,
 			})
 
 			// Then

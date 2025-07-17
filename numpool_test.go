@@ -59,10 +59,12 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 	t.Run("updates metadata successfully", func(t *testing.T) {
 		// Given
 		initialMetadata := map[string]string{"version": "1.0", "description": "initial"}
+		initialMetadataBytes, err := json.Marshal(initialMetadata)
+		require.NoError(t, err, "JSON marshal should not fail")
 		conf := numpool.Config{
 			ID:                t.Name(),
 			MaxResourcesCount: 5,
-			Metadata:          initialMetadata,
+			Metadata:          initialMetadataBytes,
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
@@ -183,10 +185,12 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 	t.Run("succeeds when another transaction updated to same value", func(t *testing.T) {
 		// Given
 		initialMetadata := map[string]string{"version": "1.0"}
+		initialMetadataBytes, err := json.Marshal(initialMetadata)
+		require.NoError(t, err, "JSON marshal should not fail")
 		conf := numpool.Config{
 			ID:                t.Name(),
 			MaxResourcesCount: 5,
-			Metadata:          initialMetadata,
+			Metadata:          initialMetadataBytes,
 		}
 		model1, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
@@ -222,10 +226,12 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 	t.Run("fails when another transaction updated to different value", func(t *testing.T) {
 		// Given
 		initialMetadata := map[string]string{"version": "1.0"}
+		initialMetadataBytes, err := json.Marshal(initialMetadata)
+		require.NoError(t, err, "JSON marshal should not fail")
 		conf := numpool.Config{
 			ID:                t.Name(),
 			MaxResourcesCount: 5,
-			Metadata:          initialMetadata,
+			Metadata:          initialMetadataBytes,
 		}
 		model1, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
