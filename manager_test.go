@@ -303,3 +303,22 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 		assert.True(t, exists, "Numpool should exist after concurrent GetOrCreate")
 	}
 }
+
+func TestManager_Close(t *testing.T) {
+	ctx := context.Background()
+	pool := internal.MustGetPoolWithCleanup(t)
+
+	manager, err := numpool.Setup(ctx, pool)
+	require.NoError(t, err, "Setup should not return an error")
+
+	// Close the manager
+	manager.Close()
+
+	// Verify that the pool is still open
+	assert.NotNil(t, pool, "Pool should not be nil after manager close")
+	assert.NoError(t, pool.Ping(ctx), "Pool should still be operational after manager close")
+
+	// Verify that the manager does not close the underlying pool
+	_, err = sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	assert.NoError(t, err, "CheckNumpoolTableExist should not return an error after manager close")
+}

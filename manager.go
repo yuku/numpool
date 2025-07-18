@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,8 +22,24 @@ func Setup(ctx context.Context, pool *pgxpool.Pool) (*Manager, error) {
 	return manager, nil
 }
 
+// Manager is the main entry point for interacting with the numpool system.
+// It is responsible for managing pools and their resources.
+// It does not close the underlying database connection pool as it is expected
+// to be managed by the caller.
 type Manager struct {
+	// pool is the underlying database connection pool.
+	// It is expected to be managed by the caller.
 	pool *pgxpool.Pool
+
+	// numpools holds the list of Numpool instances managed by this manager.
+	// This is used to track all pools created by this manager.
+	numpools []*Numpool
+
+	// closed indicates whether the manager is closed.
+	closed bool
+
+	// mu protects the closed state of the manager.
+	mu sync.RWMutex
 }
 
 // setup initializes the numpool table in the database.
@@ -98,6 +115,10 @@ func (c Config) Validate() error {
 // GetOrCreate retrieves a Numpool instance by its ID, creating it if it does not exist.
 // It returns an error if the pool already exists with a different MaxResourcesCount.
 func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error) {
+	if m.isClosed() {
+		return nil, fmt.Errorf("manager is closed")
+	}
+
 	if err := conf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid pool configuration: %w", err)
 	}
@@ -110,9 +131,14 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 	resource := &Numpool{
 		id:            conf.ID,
 		metadata:      metadata,
-		manager:       m,
+		pool:          m.pool,
 		listenHandler: &waitqueue.ListenHandler{},
 	}
+
+	m.mu.Lock()
+	m.numpools = append(m.numpools, resource)
+	m.mu.Unlock()
+
 	if !conf.NoStartListening {
 		// Start listening in a separate goroutine
 		go func() {
@@ -162,6 +188,26 @@ func (m *Manager) createIfNotExists(ctx context.Context, conf Config) (json.RawM
 	return metadata, nil
 }
 
+// Close closes m and releases any resources it holds.
+// It does not close the underlying database connection pool as it is expected
+// to be managed by the caller.
 func (m *Manager) Close() {
-	m.pool.Close()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return
+	}
+	m.closed = true
+
+	for _, np := range m.numpools {
+		np.close() // Close each Numpool instance
+	}
+	m.numpools = nil
+}
+
+func (m *Manager) isClosed() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.closed
 }

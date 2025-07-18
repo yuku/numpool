@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgxlisten"
 	"github.com/yuku/numpool/internal/sqlc"
 	"github.com/yuku/numpool/internal/waitqueue"
@@ -22,11 +23,22 @@ type Numpool struct {
 	// metadata is optional metadata associated with the pool.
 	metadata json.RawMessage
 
-	manager       *Manager
+	pool *pgxpool.Pool
+
+	// listenHandler is used to handle LISTEN/NOTIFY notifications for this pool.
+	// It is set when the pool is created and used to listen for resource availability.
+	// It becomes nil when the pool is closed.
 	listenHandler *waitqueue.ListenHandler
 
-	mu        sync.Mutex // Protects access to the pool's resources
-	listening bool       // Indicates if the listener is currently active
+	// cancelListen is a function to cancel the listening goroutine.
+	// It is set while pgxlisten.Listener is running.
+	cancelListen context.CancelFunc
+
+	// resources holds the resources acquired from the pool.
+	resources []*Resource
+
+	// mu protects the state of the Numpool.
+	mu sync.RWMutex
 }
 
 // ID returns the unique identifier of the pool.
@@ -42,15 +54,20 @@ func (p *Numpool) Metadata() json.RawMessage {
 // Listen starts listening for notifications on the pool's channel.
 // It blocks until the context is cancelled or an fatal error occurs.
 func (p *Numpool) Listen(ctx context.Context) error {
-	if err := p.startListen(); err != nil {
-		return err
+	p.mu.Lock()
+	if p.cancelListen != nil {
+		p.mu.Unlock()
+		return fmt.Errorf("listener for pool %s is already running", p.id)
 	}
-	defer func() { p.listening = false }()
+
+	ctx, p.cancelListen = context.WithCancel(ctx)
+	defer func() { p.cancelListen = nil }()
+	p.mu.Unlock()
 
 	// Create listener for LISTEN/NOTIFY
 	listener := &pgxlisten.Listener{
 		Connect: func(ctx context.Context) (*pgx.Conn, error) {
-			config := p.manager.pool.Config().ConnConfig.Copy()
+			config := p.pool.Config().ConnConfig.Copy()
 			return pgx.ConnectConfig(ctx, config)
 		},
 	}
@@ -74,20 +91,50 @@ func (p *Numpool) Listen(ctx context.Context) error {
 	return nil // never reached
 }
 
-func (p *Numpool) startListen() error {
+// close stops the listener and releases any resources held by the Numpool.
+// It does not close the underlying database connection pool as it is expected
+// to be managed by the caller.
+// It is safe to call close multiple times; subsequent calls will have no effect.
+// After calling close, the Numpool cannot be used to acquire or release resources.
+func (p *Numpool) close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.listening {
-		return fmt.Errorf("listener for pool %s is already running", p.id)
+	if p.cancelListen != nil {
+		p.cancelListen()
+		p.cancelListen = nil
 	}
-	p.listening = true
-	return nil
+
+	for _, r := range p.resources {
+		r.Close()
+	}
+	p.resources = nil
+
+	p.listenHandler = nil
+}
+
+// Listening returns true if the Numpool is currently listening for notifications.
+func (p *Numpool) Listening() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.cancelListen != nil
+}
+
+// Closed returns true if the Numpool is closed and cannot be used to acquire or
+// release resources.
+func (p *Numpool) Closed() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.listenHandler == nil
 }
 
 // Acquire acquires a resource from the pool.
 func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
-	tx, err := p.manager.pool.Begin(ctx)
+	if p.Closed() {
+		return nil, fmt.Errorf("cannot acquire resource from closed pool %s", p.id)
+	}
+
+	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -116,13 +163,17 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit transaction after acquiring resource: %w", err)
 		}
-		return &Resource{
+		resource := &Resource{
 			pool:  p,
 			index: resourceIndex,
-		}, nil
+		}
+		p.mu.Lock()
+		p.resources = append(p.resources, resource)
+		p.mu.Unlock()
+		return resource, nil
 	}
 
-	if !p.listening {
+	if !p.Listening() {
 		return nil, fmt.Errorf("listener is not running, cannot acquire resource")
 	}
 
@@ -162,7 +213,7 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 
 func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) error {
 	// Remove the client from the wait queue
-	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		queries := sqlc.New(tx)
 		if _, err := queries.GetNumpoolForUpdate(ctx, p.id); err != nil {
 			return fmt.Errorf("failed to get numpool with lock: %w", err)
@@ -177,7 +228,7 @@ func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) erro
 func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*Resource, error) {
 	var resourceIndex int
 
-	err := pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		queries := sqlc.New(tx)
 
 		// Get the pool with lock
@@ -218,15 +269,19 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 		return nil, err
 	}
 
-	return &Resource{
+	resource := &Resource{
 		pool:  p,
 		index: resourceIndex,
-	}, nil
+	}
+	p.mu.Lock()
+	p.resources = append(p.resources, resource)
+	p.mu.Unlock()
+	return resource, nil
 }
 
 // release releases a resource back to the pool.
 func (p *Numpool) release(ctx context.Context, r *Resource) error {
-	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 
 		// Get the pool with lock
@@ -272,7 +327,7 @@ func (p *Numpool) channelName() string {
 // Delete removes a Numpool instance by its ID.
 // It returns an error if the pool does not exist or if the deletion fails.
 func (m *Numpool) Delete(ctx context.Context) error {
-	affected, err := sqlc.New(m.manager.pool).DeleteNumpool(ctx, m.id)
+	affected, err := sqlc.New(m.pool).DeleteNumpool(ctx, m.id)
 	if err != nil {
 		return fmt.Errorf("failed to delete pool %s: %w", m.id, err)
 	}
@@ -286,7 +341,7 @@ func (m *Numpool) Delete(ctx context.Context) error {
 // It returns an error if the update fails or if the metadata has been modified by another transaction.
 // Pass nil to set the metadata to null in the database.
 func (m *Numpool) UpdateMetadata(ctx context.Context, metadata json.RawMessage) error {
-	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 
 		// Get the pool with lock
