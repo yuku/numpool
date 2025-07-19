@@ -40,13 +40,51 @@ func TestNumpool_Delete(t *testing.T) {
 		assert.NoError(t, err, "CheckNumpoolExists should not return an error after deletion")
 		assert.False(t, exists, "Numpool should not exist after deletion")
 
+		// Verify the pool instance is closed
+		assert.True(t, model.Closed(), "Pool should be closed after deletion")
+
 		t.Run("returns error for non-existing pool", func(t *testing.T) {
-			// When
+			// When (pool was already deleted in parent test)
 			err := manager.Delete(ctx, model.ID())
 
 			// Then
 			assert.Error(t, err, "Delete should return an error for non-existing pool")
+			assert.Contains(t, err.Error(), "is not managed by this manager", "Error should indicate pool is not managed")
 		})
+	})
+
+	t.Run("returns error when pool exists in DB but not managed by this manager", func(t *testing.T) {
+		// Given: Create a pool with one manager
+		conf := numpool.Config{
+			ID:                "unmanaged-pool",
+			MaxResourcesCount: 3,
+		}
+
+		manager1, err := numpool.Setup(ctx, pool)
+		require.NoError(t, err, "Setup should not return an error")
+
+		_, err = manager1.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+
+		// Create a different manager that doesn't manage this pool
+		manager2, err := numpool.Setup(ctx, pool)
+		require.NoError(t, err, "Setup should not return an error")
+
+		// When: Try to delete with manager2 (pool exists in DB but not managed by manager2)
+		err = manager2.Delete(ctx, conf.ID)
+
+		// Then: Should return error indicating pool is not managed
+		assert.Error(t, err, "Delete should return an error for unmanaged pool")
+		assert.Contains(t, err.Error(), "is not managed by this manager", "Error should indicate pool is not managed")
+
+		// Verify pool still exists in database
+		exists, err := queries.CheckNumpoolExists(ctx, conf.ID)
+		assert.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, exists, "Pool should still exist in database after failed delete")
+
+		// Cleanup: Delete with the managing manager
+		err = manager1.Delete(ctx, conf.ID)
+		assert.NoError(t, err, "Delete should succeed with managing manager")
 	})
 }
 

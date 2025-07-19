@@ -214,18 +214,45 @@ func (m *Manager) Closed() bool {
 }
 
 // Delete removes a Numpool instance by its ID.
-// It returns an error if the pool does not exist or if the deletion fails.
+// It closes the pool if it exists in the manager's tracked pools and deletes it from the database.
+// It returns an error if the pool is not managed by this manager or if the deletion fails.
 func (m *Manager) Delete(ctx context.Context, poolID string) error {
 	if m.Closed() {
 		return fmt.Errorf("manager is closed")
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find the pool in the managed pools
+	var poolToClose *Numpool
+	poolIndex := -1
+	for i, np := range m.numpools {
+		if np.id == poolID {
+			poolToClose = np
+			poolIndex = i
+			break
+		}
+	}
+
+	// Return error if pool is not managed by this manager
+	if poolToClose == nil {
+		return fmt.Errorf("pool %s is not managed by this manager", poolID)
+	}
+
+	// Close the pool instance first
+	poolToClose.Close()
+
+	// Remove from managed pools list
+	m.numpools = append(m.numpools[:poolIndex], m.numpools[poolIndex+1:]...)
+
+	// Delete from database
 	affected, err := sqlc.New(m.pool).DeleteNumpool(ctx, poolID)
 	if err != nil {
 		return fmt.Errorf("failed to delete pool %s: %w", poolID, err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("pool %s does not exist", poolID)
+		return fmt.Errorf("pool %s does not exist in database", poolID)
 	}
 	return nil
 }

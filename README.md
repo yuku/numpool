@@ -213,7 +213,8 @@ pool.Close()
 ### Manager Methods
 
 ```go
-// Delete a pool by ID (returns error if pool doesn't exist)
+// Delete a pool by ID (closes pool and removes from database)
+// Returns error if pool is not managed by this manager
 err := manager.Delete(ctx, "pool-id")
 
 // Check if manager is closed
@@ -359,7 +360,7 @@ Understanding the difference between closing and deleting pools:
 |-----------|-------|-----------------|----------|
 | `pool.Close()` | Instance only | **Preserved** | Stop listening, release resources, but keep pool definition |
 | `manager.Close()` | All managed pools | **Preserved** | Shutdown manager, close all pools, but keep all pool definitions |
-| `manager.Delete(ctx, poolID)` | Database record | **Removed** | Permanently delete pool definition from database |
+| `manager.Delete(ctx, poolID)` | Database record | **Removed** | Close managed pool and permanently delete from database |
 
 ```go
 // Example: Close vs Delete
@@ -371,14 +372,15 @@ pool.Close()
 // Pool is closed, but another manager can still access the same pool:
 newPool, _ := manager.GetOrCreate(ctx, numpool.Config{ID: "example", MaxResourcesCount: 5})
 
-// Option 2: Delete the pool from database (permanent removal)
+// Option 2: Delete the pool from database (closes pool and permanent removal)
 err := manager.Delete(ctx, "example")
-// Now the pool definition is completely removed from the database
+// Pool is closed and its definition is completely removed from the database
 ```
 
 **Important Notes**: 
 - The Manager and Numpool instances do **NOT** close the underlying `pgxpool.Pool` when their `Close()` methods are called. The database connection pool lifecycle is the caller's responsibility. This design allows multiple managers to share the same database pool and gives you full control over when to close the database connections.
-- **Close vs Delete**: `Close()` methods only stop instances and release resources but **preserve database records**. Use `manager.Delete(ctx, poolID)` to permanently remove a pool from the database.
+- **Close vs Delete**: `Close()` methods only stop instances and release resources but **preserve database records**. Use `manager.Delete(ctx, poolID)` to close a managed pool and permanently remove it from the database.
+- **Manager Delete Restriction**: `manager.Delete()` only works on pools that were created by that specific manager instance. It will return an error if you try to delete a pool that exists in the database but was created by a different manager.
 
 ## Testing
 
