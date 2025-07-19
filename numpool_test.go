@@ -316,4 +316,44 @@ func TestNumpool_Close(t *testing.T) {
 		require.NoError(t, err, "Acquire should not return an error for new resource")
 		assert.NotNil(t, otherResource, "Should acquire a new resource from the same pool")
 	})
+
+	t.Run("does not delete the numpool record from database", func(t *testing.T) {
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(manager.Close)
+
+		// Given: a Numpool instance without auto-starting listener to avoid race condition
+		config := numpool.Config{ID: "numpool-close-no-delete", MaxResourcesCount: 3, NoStartListening: true}
+		np, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+
+		// Verify the pool exists in the database before closing
+		queries := sqlc.New(connPool)
+		existsBefore, err := queries.CheckNumpoolExists(ctx, config.ID)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, existsBefore, "Pool should exist in database before close")
+
+		// When: close the Numpool (this should NOT delete the database record)
+		np.Close()
+
+		// Then: the database record should still exist
+		existsAfter, err := queries.CheckNumpoolExists(ctx, config.ID)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error after close")
+		assert.True(t, existsAfter, "Pool record should still exist in database after Close()")
+
+		// Verify we can still get the pool data from database
+		poolData, err := queries.GetNumpool(ctx, config.ID)
+		require.NoError(t, err, "GetNumpool should not return an error after close")
+		assert.Equal(t, config.ID, poolData.ID, "Pool ID should match")
+		assert.Equal(t, config.MaxResourcesCount, poolData.MaxResourcesCount, "MaxResourcesCount should match")
+
+		// Verify that a new manager can still access the existing pool
+		otherManager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(otherManager.Close)
+
+		otherNp, err := otherManager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should work with existing pool record")
+		assert.Equal(t, config.ID, otherNp.ID(), "Pool ID should match existing record")
+	})
 }
