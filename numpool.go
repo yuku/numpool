@@ -328,19 +328,6 @@ func (p *Numpool) channelName() string {
 	return fmt.Sprintf("np_%s", p.id)
 }
 
-// Delete removes a Numpool instance by its ID.
-// It returns an error if the pool does not exist or if the deletion fails.
-func (m *Numpool) Delete(ctx context.Context) error {
-	affected, err := sqlc.New(m.pool).DeleteNumpool(ctx, m.id)
-	if err != nil {
-		return fmt.Errorf("failed to delete pool %s: %w", m.id, err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("pool %s does not exist", m.id)
-	}
-	return nil
-}
-
 // UpdateMetadata updates the metadata of the Numpool instance.
 // It returns an error if the update fails or if the metadata has been modified by another transaction.
 // Pass nil to set the metadata to null in the database.

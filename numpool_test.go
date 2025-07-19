@@ -32,7 +32,7 @@ func TestNumpool_Delete(t *testing.T) {
 		assert.NotNil(t, model, "GetOrCreate should return a valid Numpool instance")
 
 		// When
-		err = model.Delete(ctx)
+		err = manager.Delete(ctx, model.ID())
 
 		// Then
 		assert.NoError(t, err, "Delete should not return an error")
@@ -42,7 +42,7 @@ func TestNumpool_Delete(t *testing.T) {
 
 		t.Run("returns error for non-existing pool", func(t *testing.T) {
 			// When
-			err := model.Delete(ctx)
+			err := manager.Delete(ctx, model.ID())
 
 			// Then
 			assert.Error(t, err, "Delete should return an error for non-existing pool")
@@ -69,7 +69,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// Verify initial metadata
 		var initial map[string]string
@@ -114,7 +114,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		require.NoError(t, err, "GetOrCreate should not return an error")
 
 		// Delete the pool
-		err = model.Delete(ctx)
+		err = manager.Delete(ctx, model.ID())
 		require.NoError(t, err, "Delete should not return an error")
 
 		// When - try to update metadata of deleted pool
@@ -135,7 +135,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// When - try to update with invalid JSON
 		// Use invalid JSON directly since we can't marshal circular references
@@ -154,7 +154,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// When - update with nil metadata
 		err = model.UpdateMetadata(ctx, nil)
@@ -172,7 +172,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// When - update with empty map
 		emptyMap := make(map[string]string)
@@ -200,7 +200,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model1, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model1.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model1.ID()) })
 
 		// Get a second instance of the same pool
 		model2, err := manager.GetOrCreate(ctx, numpool.Config{
@@ -243,7 +243,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model1, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model1.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model1.ID()) })
 
 		// Get a second instance of the same pool
 		model2, err := manager.GetOrCreate(ctx, numpool.Config{

@@ -198,9 +198,6 @@ metadataBytes, _ := json.Marshal(map[string]string{
 })
 err := pool.UpdateMetadata(ctx, metadataBytes)
 
-// Delete the pool (returns error if pool doesn't exist)
-err := pool.Delete(ctx)
-
 // Check pool status
 if pool.Listening() {
     log.Println("Pool is listening for notifications")
@@ -211,6 +208,21 @@ if pool.Closed() {
 
 // Manually close a pool (stops listening and releases resources)
 pool.Close()
+```
+
+### Manager Methods
+
+```go
+// Delete a pool by ID (returns error if pool doesn't exist)
+err := manager.Delete(ctx, "pool-id")
+
+// Check if manager is closed
+if manager.Closed() {
+    log.Println("Manager is closed")
+}
+
+// Close the manager (closes all managed pools but not the database pool)
+manager.Close()
 ```
 
 ### Resource Methods

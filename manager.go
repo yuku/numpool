@@ -212,3 +212,20 @@ func (m *Manager) Closed() bool {
 	defer m.mu.RUnlock()
 	return m.closed
 }
+
+// Delete removes a Numpool instance by its ID.
+// It returns an error if the pool does not exist or if the deletion fails.
+func (m *Manager) Delete(ctx context.Context, poolID string) error {
+	if m.Closed() {
+		return fmt.Errorf("manager is closed")
+	}
+
+	affected, err := sqlc.New(m.pool).DeleteNumpool(ctx, poolID)
+	if err != nil {
+		return fmt.Errorf("failed to delete pool %s: %w", poolID, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("pool %s does not exist", poolID)
+	}
+	return nil
+}
