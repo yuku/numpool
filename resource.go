@@ -29,7 +29,7 @@ func (r *Resource) Release(ctx context.Context) error {
 		return r.releaseErr // Return the stored error if already released
 	}
 
-	r.releaseErr = r.pool.release(ctx, r) // Store the error from release
+	r.releaseErr = r.pool.release(ctx, r) // Store release result for idempotent behavior
 	if r.releaseErr == nil {
 		r.closed = true // Mark as closed only on successful release
 	}
