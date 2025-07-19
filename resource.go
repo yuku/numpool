@@ -7,10 +7,11 @@ import (
 
 // Resource represents a resource acquired from the pool.
 type Resource struct {
-	pool   *Numpool
-	index  int
-	closed bool
-	mu     sync.RWMutex
+	pool       *Numpool
+	index      int
+	closed     bool
+	releaseErr error
+	mu         sync.RWMutex
 }
 
 // Index returns the index of the resource in the pool.
@@ -19,20 +20,20 @@ func (r *Resource) Index() int {
 }
 
 // Release releases r back to the pool.
-// It is safe to call Release multiple times; subsequent calls will be no-ops.
+// It is safe to call Release multiple times; subsequent calls will return the original error if any.
 func (r *Resource) Release(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.closed {
-		return nil // Already released
+		return r.releaseErr // Return the stored error if already released
 	}
 
-	if err := r.pool.release(ctx, r); err != nil {
-		return err
+	r.releaseErr = r.pool.release(ctx, r) // Store the error from release
+	if r.releaseErr == nil {
+		r.closed = true // Mark as closed only on successful release
 	}
-	r.closed = true
-	return nil
+	return r.releaseErr
 }
 
 // Close releases the resource back to the pool, ignoring any errors.

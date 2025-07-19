@@ -178,6 +178,9 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 			return nil, fmt.Errorf("failed to commit transaction after acquiring resource: %w", err)
 		}
 
+		// Track resource in memory after successful database acquisition.
+		// The database transaction ensures acquisition atomicity, and the mutex
+		// ensures tracking atomicity. We only track successfully acquired resources.
 		p.mu.Lock()
 		resource := &Resource{
 			pool:  p,
@@ -284,6 +287,8 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 		return nil, err
 	}
 
+	// Track resource in memory after successful database acquisition.
+	// Same pattern as above - database transaction ensures acquisition atomicity.
 	p.mu.Lock()
 	resource := &Resource{
 		pool:  p,

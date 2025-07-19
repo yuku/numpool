@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -149,7 +150,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 				}
 				m.mu.Unlock()
 				resource.Close()
-				panic(err)
+				log.Printf("Numpool %s listener failed: %v", resource.id, err)
 			}
 		}()
 	}
