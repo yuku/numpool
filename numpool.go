@@ -75,7 +75,17 @@ func (p *Numpool) Listen(ctx context.Context) error {
 			return pgx.ConnectConfig(ctx, config)
 		},
 	}
-	listener.Handle(p.channelName(), p.listenHandler)
+
+	// Check if already closed before setting up listener
+	p.mu.RLock()
+	if p.listenHandler == nil {
+		p.mu.RUnlock()
+		return nil // Already closed
+	}
+	handler := p.listenHandler
+	p.mu.RUnlock()
+
+	listener.Handle(p.channelName(), handler)
 
 	if err := listener.Listen(ctx); err != nil {
 		// If the context is cancelled, we can ignore the error.
