@@ -41,4 +41,15 @@
 //
 //	// Use the resource
 //	fmt.Printf("Using resource %d\n", resource.Index())
+//
+// Lifecycle management:
+//
+//	// Delete a pool permanently from the database
+//	err = manager.Delete(ctx, "my-resource-pool")
+//
+//	// Close a pool instance (keeps database record)
+//	pool.Close()
+//
+//	// Close manager and all its pools (keeps database records)
+//	manager.Close()
 package numpool
