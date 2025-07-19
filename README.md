@@ -54,7 +54,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    defer manager.Close()
+    defer manager.Close() // This does NOT close the database pool
 }
 ```
 
@@ -86,7 +86,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    defer manager.Close()
+    defer manager.Close() // This does NOT close the database pool
     
     // Create or get a resource pool
     metadataBytes, _ := json.Marshal(map[string]string{"description": "API rate limiter"})
@@ -338,6 +338,8 @@ if pool1.Closed() {
     log.Println("Pool1 is closed")
 }
 ```
+
+**Important Note**: The Manager and Numpool instances do **NOT** close the underlying `pgxpool.Pool` when their `Close()` methods are called. The database connection pool lifecycle is the caller's responsibility. This design allows multiple managers to share the same database pool and gives you full control over when to close the database connections.
 
 ## Testing
 
