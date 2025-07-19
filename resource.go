@@ -27,11 +27,11 @@ func (r *Resource) Release(ctx context.Context) error {
 	if r.closed {
 		return nil // Already released
 	}
-	r.closed = true
 
 	if err := r.pool.release(ctx, r); err != nil {
 		return err
 	}
+	r.closed = true
 	return nil
 }
 

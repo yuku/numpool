@@ -135,18 +135,28 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 		listenHandler: &waitqueue.ListenHandler{},
 	}
 
-	m.mu.Lock()
-	m.numpools = append(m.numpools, resource)
-	m.mu.Unlock()
-
 	if !conf.NoStartListening {
 		// Start listening in a separate goroutine
 		go func() {
 			if err := resource.Listen(ctx); err != nil {
+				// If listen fails, remove from tracking and close the resource
+				m.mu.Lock()
+				for i, np := range m.numpools {
+					if np.id == resource.id {
+						m.numpools = append(m.numpools[:i], m.numpools[i+1:]...)
+						break
+					}
+				}
+				m.mu.Unlock()
+				resource.Close()
 				panic(err)
 			}
 		}()
 	}
+
+	m.mu.Lock()
+	m.numpools = append(m.numpools, resource)
+	m.mu.Unlock()
 
 	return resource, nil
 }

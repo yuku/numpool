@@ -167,11 +167,12 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit transaction after acquiring resource: %w", err)
 		}
+
+		p.mu.Lock()
 		resource := &Resource{
 			pool:  p,
 			index: resourceIndex,
 		}
-		p.mu.Lock()
 		p.resources = append(p.resources, resource)
 		p.mu.Unlock()
 		return resource, nil
@@ -273,11 +274,11 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 		return nil, err
 	}
 
+	p.mu.Lock()
 	resource := &Resource{
 		pool:  p,
 		index: resourceIndex,
 	}
-	p.mu.Lock()
 	p.resources = append(p.resources, resource)
 	p.mu.Unlock()
 	return resource, nil
