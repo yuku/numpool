@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -136,8 +137,8 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 	}
 
 	if !conf.NoStartListening {
-		// Start listening in a separate goroutine with proper context handling
-		go func(ctx context.Context, resource *Numpool) {
+		// Start listening in a separate goroutine
+		go func() {
 			if err := resource.Listen(ctx); err != nil {
 				// If listen fails, remove from tracking and close the resource
 				m.mu.Lock()
@@ -149,11 +150,9 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 				}
 				m.mu.Unlock()
 				resource.Close()
-				// TODO: Consider adding a callback mechanism for error handling
-				// For now, the error is handled by removing the pool from tracking
-				// Applications should monitor pool health separately
+				log.Printf("Numpool %s listener failed: %v", resource.id, err)
 			}
-		}(ctx, resource)
+		}()
 	}
 
 	m.mu.Lock()
