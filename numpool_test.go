@@ -26,6 +26,7 @@ func TestNumpool_Delete(t *testing.T) {
 		conf := numpool.Config{
 			ID:                t.Name(),
 			MaxResourcesCount: 5,
+			NoStartListening:  true, // Avoid race condition with Listen goroutine
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
@@ -58,6 +59,7 @@ func TestNumpool_Delete(t *testing.T) {
 		conf := numpool.Config{
 			ID:                "unmanaged-pool",
 			MaxResourcesCount: 3,
+			NoStartListening:  true, // Avoid race condition with Listen goroutine
 		}
 
 		manager1, err := numpool.Setup(ctx, pool)
