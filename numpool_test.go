@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -271,5 +272,48 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		err = json.Unmarshal(model1.Metadata(), &result1)
 		require.NoError(t, err, "Should unmarshal model1 metadata")
 		assert.Equal(t, metadata1, result1, "Model1 metadata should be unchanged")
+	})
+}
+
+func TestNumpool_Close(t *testing.T) {
+	ctx := context.Background()
+	connPool := internal.MustGetPoolWithCleanup(t)
+
+	t.Run("closes the numpool and releases resources without closing underlying connection pool", func(t *testing.T) {
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(manager.Close)
+
+		// Given: a Numpool instance and acquire a resource
+		config := numpool.Config{ID: "numpool-close", MaxResourcesCount: 1}
+		np, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		t.Cleanup(cancel)
+		resource, err := np.Acquire(ctxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error")
+
+		// When: close the Numpool
+		np.Close()
+
+		// Then: the underlying connection pool should still be operational
+		assert.NotNil(t, connPool, "Pool should not be nil after manager close")
+		assert.NoError(t, connPool.Ping(ctx), "Pool should still be operational after manager close")
+		exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
+		assert.NoError(t, err, "CheckNumpoolTableExist should not return an error after manager close")
+		assert.True(t, exists, "Numpool table should still exist after manager close")
+
+		// Then: the Numpool should be closed and the resource should be released
+		assert.True(t, np.Closed(), "Numpool should be closed after Close()")
+		assert.True(t, resource.Closed(), "Resource should be closed after Numpool close")
+
+		// Verify that the resource can be acquired
+		otherNp, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error for existing pool")
+		ctxWithTimeout, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+		t.Cleanup(cancel)
+		otherResource, err := otherNp.Acquire(ctxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error for new resource")
+		assert.NotNil(t, otherResource, "Should acquire a new resource from the same pool")
 	})
 }

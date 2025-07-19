@@ -61,7 +61,11 @@ func (p *Numpool) Listen(ctx context.Context) error {
 	}
 
 	ctx, p.cancelListen = context.WithCancel(ctx)
-	defer func() { p.cancelListen = nil }()
+	defer func() {
+		p.mu.Lock()
+		p.cancelListen = nil
+		p.mu.Unlock()
+	}()
 	p.mu.Unlock()
 
 	// Create listener for LISTEN/NOTIFY
@@ -91,12 +95,12 @@ func (p *Numpool) Listen(ctx context.Context) error {
 	return nil // never reached
 }
 
-// close stops the listener and releases any resources held by the Numpool.
-// It does not close the underlying database connection pool as it is expected
+// Close stops the listener and releases any resources held by the Numpool.
+// It does not Close the underlying database connection pool as it is expected
 // to be managed by the caller.
-// It is safe to call close multiple times; subsequent calls will have no effect.
-// After calling close, the Numpool cannot be used to acquire or release resources.
-func (p *Numpool) close() {
+// It is safe to call Close multiple times; subsequent calls will have no effect.
+// After calling Close, the Numpool cannot be used to acquire or release resources.
+func (p *Numpool) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

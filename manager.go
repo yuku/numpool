@@ -115,7 +115,7 @@ func (c Config) Validate() error {
 // GetOrCreate retrieves a Numpool instance by its ID, creating it if it does not exist.
 // It returns an error if the pool already exists with a different MaxResourcesCount.
 func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error) {
-	if m.isClosed() {
+	if m.Closed() {
 		return nil, fmt.Errorf("manager is closed")
 	}
 
@@ -201,12 +201,13 @@ func (m *Manager) Close() {
 	m.closed = true
 
 	for _, np := range m.numpools {
-		np.close() // Close each Numpool instance
+		np.Close() // Close each Numpool instance
 	}
 	m.numpools = nil
 }
 
-func (m *Manager) isClosed() bool {
+// Closed returns if the manager is closed.
+func (m *Manager) Closed() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.closed

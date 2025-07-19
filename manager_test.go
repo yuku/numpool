@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -306,19 +307,65 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 func TestManager_Close(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
+	connPool := internal.MustGetPoolWithCleanup(t)
 
-	manager, err := numpool.Setup(ctx, pool)
-	require.NoError(t, err, "Setup should not return an error")
+	t.Run("closes manager without closing underlying connection pool", func(t *testing.T) {
+		// Given: a manager setup with a connection pool
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
 
-	// Close the manager
-	manager.Close()
+		// When: close the manager
+		manager.Close()
 
-	// Verify that the pool is still open
-	assert.NotNil(t, pool, "Pool should not be nil after manager close")
-	assert.NoError(t, pool.Ping(ctx), "Pool should still be operational after manager close")
+		// Then: the connection pool and db table should still be operational
+		assert.NotNil(t, connPool, "Pool should not be nil after manager close")
+		assert.NoError(t, connPool.Ping(ctx), "Pool should still be operational after manager close")
+		exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
+		assert.NoError(t, err, "CheckNumpoolTableExist should not return an error after manager close")
+		assert.True(t, exists, "Numpool table should still exist after manager close")
+	})
 
-	// Verify that the manager does not close the underlying pool
-	_, err = sqlc.New(pool).CheckNumpoolTableExist(ctx)
-	assert.NoError(t, err, "CheckNumpoolTableExist should not return an error after manager close")
+	t.Run("closes manager and releases resources", func(t *testing.T) {
+		// Given: a manager setup with a connection pool and a Numpool instance
+		// and acquire a resource
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+
+		config := numpool.Config{ID: t.Name(), MaxResourcesCount: 1}
+		np, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		assert.NotNil(t, np, "GetOrCreate should return a valid Numpool instance")
+
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		t.Cleanup(cancel)
+		resource, err := np.Acquire(ctxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error")
+		require.Equal(t, 0, resource.Index(), "Resource index should be 0 for single resource pool")
+
+		// Verify that manager and Numpool are not closed yet
+		assert.False(t, manager.Closed(), "Manager should not be closed before Close()")
+		assert.False(t, np.Closed(), "Numpool should not be closed before Close()")
+		assert.False(t, resource.Closed(), "Resource should not be closed before Close()")
+
+		// When: close the manager
+		manager.Close()
+
+		// Then: the manager, Numpool, and resource should be closed
+		assert.True(t, manager.Closed(), "Manager should be closed after Close()")
+		assert.True(t, np.Closed(), "Numpool should be closed after manager close")
+		assert.True(t, resource.Closed(), "Resource should be closed after manager close")
+
+		// Verify the resource is released back to the pool
+		otherManager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(otherManager.Close)
+		otherNp, err := otherManager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		otherCtxWithTimeout, otherCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		t.Cleanup(otherCancel)
+		otherResource, err := otherNp.Acquire(otherCtxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error for the released resource")
+		assert.NotNil(t, otherResource, "Acquire should return a valid Resource instance")
+		assert.Equal(t, 0, otherResource.Index(), "Resource index should be 0 for single resource pool")
+	})
 }
