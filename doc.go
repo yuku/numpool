@@ -8,22 +8,23 @@
 //
 // Setup:
 //
-// Before using numpool, you need to set up the required database table:
+// Before using numpool, you need to set up the required database table and get a manager:
 //
-//	conn, err := pgx.Connect(ctx, databaseURL)
+//	dbPool, err := pgxpool.New(ctx, databaseURL)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
-//	defer conn.Close(ctx)
+//	defer dbPool.Close()
 //
-//	if err := numpool.Setup(ctx, conn); err != nil {
+//	manager, err := numpool.Setup(ctx, dbPool)
+//	if err != nil {
 //		log.Fatal(err)
 //	}
+//	defer manager.Close()
 //
 // Basic usage:
 //
-//	pool, err := numpool.CreateOrOpen(ctx, numpool.Config{
-//		Pool:              dbPool,
+//	pool, err := manager.GetOrCreate(ctx, numpool.Config{
 //		ID:                "my-resource-pool",
 //		MaxResourcesCount: 10,
 //	})
@@ -40,4 +41,15 @@
 //
 //	// Use the resource
 //	fmt.Printf("Using resource %d\n", resource.Index())
+//
+// Lifecycle management:
+//
+//	// Delete a pool permanently from the database
+//	err = manager.Delete(ctx, "my-resource-pool")
+//
+//	// Close a pool instance (keeps database record)
+//	pool.Close()
+//
+//	// Close manager and all its pools (keeps database records)
+//	manager.Close()
 package numpool

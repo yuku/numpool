@@ -20,7 +20,6 @@ func setupWithUniquePoolID(t *testing.T) (*numpool.Manager, string) {
 
 	manager, err := numpool.Setup(ctx, dbPool)
 	require.NoError(t, err, "Failed to create Numpool manager")
-	t.Cleanup(manager.Close)
 
 	// Clean up any existing pool with the same ID
 	_, err = sqlc.New(dbPool).DeleteNumpool(ctx, poolID)

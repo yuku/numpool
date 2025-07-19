@@ -19,7 +19,7 @@ func (q *Queries) AcquireAdvisoryLock(ctx context.Context, lockID int64) error {
 }
 
 const acquireResource = `-- name: AcquireResource :execrows
-UPDATE numpool
+UPDATE numpools
 SET resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - $2))
 WHERE id = $1
   AND (resource_usage_status & (1::BIT(64) << (63 - $2))) = 0::BIT(64)
@@ -41,7 +41,7 @@ func (q *Queries) AcquireResource(ctx context.Context, arg AcquireResourceParams
 }
 
 const acquireResourceAndDequeueFirstWaiter = `-- name: AcquireResourceAndDequeueFirstWaiter :execrows
-UPDATE numpool
+UPDATE numpools
 SET
   resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - $2::INTEGER)),
   wait_queue = wait_queue[2:]
@@ -70,7 +70,7 @@ func (q *Queries) AcquireResourceAndDequeueFirstWaiter(ctx context.Context, arg 
 const checkNumpoolExists = `-- name: CheckNumpoolExists :one
 SELECT EXISTS (
     SELECT 1
-    FROM numpool
+    FROM numpools
     WHERE id = $1
 ) AS exists
 `
@@ -88,7 +88,7 @@ SELECT EXISTS (
     SELECT 1
     FROM information_schema.tables
     WHERE table_schema = 'public'
-      AND table_name = 'numpool'
+      AND table_name = 'numpools'
 ) AS exists
 `
 
@@ -101,7 +101,7 @@ func (q *Queries) CheckNumpoolTableExist(ctx context.Context) (bool, error) {
 }
 
 const createNumpool = `-- name: CreateNumpool :exec
-INSERT INTO numpool (id, max_resources_count, metadata)
+INSERT INTO numpools (id, max_resources_count, metadata)
 VALUES ($1, $2, $3)
 `
 
@@ -118,7 +118,7 @@ func (q *Queries) CreateNumpool(ctx context.Context, arg CreateNumpoolParams) er
 }
 
 const deleteNumpool = `-- name: DeleteNumpool :execrows
-DELETE FROM numpool WHERE id = $1
+DELETE FROM numpools WHERE id = $1
 `
 
 // DeleteNumpool deletes the numpool with the specified id.
@@ -131,7 +131,7 @@ func (q *Queries) DeleteNumpool(ctx context.Context, id string) (int64, error) {
 }
 
 const enqueueWaitingClient = `-- name: EnqueueWaitingClient :exec
-UPDATE numpool
+UPDATE numpools
 SET wait_queue = array_append(wait_queue, $2::VARCHAR(100))
 WHERE id = $1
 `
@@ -148,7 +148,7 @@ func (q *Queries) EnqueueWaitingClient(ctx context.Context, arg EnqueueWaitingCl
 }
 
 const getNumpool = `-- name: GetNumpool :one
-SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpool WHERE id = $1
+SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpools WHERE id = $1
 `
 
 // GetNumpoolForUpdate retrieves the numpool row with the given id without locking it.
@@ -166,7 +166,7 @@ func (q *Queries) GetNumpool(ctx context.Context, id string) (Numpool, error) {
 }
 
 const getNumpoolForUpdate = `-- name: GetNumpoolForUpdate :one
-SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpool WHERE id = $1 FOR UPDATE
+SELECT id, max_resources_count, resource_usage_status, wait_queue, metadata FROM numpools WHERE id = $1 FOR UPDATE
 `
 
 // GetNumpoolForUpdate retrieves the numpool row with the given id and locks it for update.
@@ -184,7 +184,7 @@ func (q *Queries) GetNumpoolForUpdate(ctx context.Context, id string) (Numpool, 
 }
 
 const lockNumpoolTableInShareMode = `-- name: LockNumpoolTableInShareMode :exec
-LOCK TABLE numpool IN SHARE ROW EXCLUSIVE MODE
+LOCK TABLE numpools IN SHARE ROW EXCLUSIVE MODE
 `
 
 func (q *Queries) LockNumpoolTableInShareMode(ctx context.Context) error {
@@ -207,7 +207,7 @@ func (q *Queries) NotifyWaiters(ctx context.Context, arg NotifyWaitersParams) er
 }
 
 const releaseResource = `-- name: ReleaseResource :execrows
-UPDATE numpool
+UPDATE numpools
 SET resource_usage_status = resource_usage_status & ~(1::BIT(64) << (63 - $2))
 WHERE id = $1
 	AND (resource_usage_status & (1::BIT(64) << (63 - $2))) <> 0::BIT(64)
@@ -228,7 +228,7 @@ func (q *Queries) ReleaseResource(ctx context.Context, arg ReleaseResourceParams
 }
 
 const removeFromWaitQueue = `-- name: RemoveFromWaitQueue :exec
-UPDATE numpool
+UPDATE numpools
 SET wait_queue = array_remove(wait_queue, $2)
 WHERE id = $1
 `
@@ -245,7 +245,7 @@ func (q *Queries) RemoveFromWaitQueue(ctx context.Context, arg RemoveFromWaitQue
 }
 
 const updateNumpoolMetadata = `-- name: UpdateNumpoolMetadata :exec
-UPDATE numpool
+UPDATE numpools
 SET metadata = $2
 WHERE id = $1
 `

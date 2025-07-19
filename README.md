@@ -54,7 +54,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    defer manager.Close()
+    defer manager.Close() // This does NOT close the database pool
 }
 ```
 
@@ -86,7 +86,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    defer manager.Close()
+    defer manager.Close() // This does NOT close the database pool
     
     // Create or get a resource pool
     metadataBytes, _ := json.Marshal(map[string]string{"description": "API rate limiter"})
@@ -198,8 +198,32 @@ metadataBytes, _ := json.Marshal(map[string]string{
 })
 err := pool.UpdateMetadata(ctx, metadataBytes)
 
-// Delete the pool (returns error if pool doesn't exist)
-err := pool.Delete(ctx)
+// Check pool status
+if pool.Listening() {
+    log.Println("Pool is listening for notifications")
+}
+if pool.Closed() {
+    log.Println("Pool is closed")
+}
+
+// Manually close a pool (stops listening and releases resources)
+pool.Close()
+```
+
+### Manager Methods
+
+```go
+// Delete a pool by ID (closes pool and removes from database)
+// Returns error if pool is not managed by this manager
+err := manager.Delete(ctx, "pool-id")
+
+// Check if manager is closed
+if manager.Closed() {
+    log.Println("Manager is closed")
+}
+
+// Close the manager (closes all managed pools but not the database pool)
+manager.Close()
 ```
 
 ### Resource Methods
@@ -213,6 +237,11 @@ err := resource.Release(ctx)
 
 // Release without error handling (for defer)
 resource.Close()
+
+// Check if resource is closed/released
+if resource.Closed() {
+    log.Println("Resource has been released")
+}
 ```
 
 ## Metadata Management
@@ -295,6 +324,63 @@ if err != nil {
 - **JSON Storage**: Metadata is stored as JSONB in PostgreSQL, allowing for efficient queries and indexing.
 - **Null Handling**: Pools can have null metadata, which is returned as `nil` from the `Metadata()` method.
 - **Nil Support**: The `UpdateMetadata` method accepts nil to set metadata to null in the database.
+
+## Lifecycle Management
+
+The Manager provides proper lifecycle management for Numpool instances:
+
+```go
+// The manager tracks all Numpool instances created through it
+manager, err := numpool.Setup(ctx, dbPool)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Create multiple pools
+pool1, _ := manager.GetOrCreate(ctx, numpool.Config{ID: "pool1", MaxResourcesCount: 5})
+pool2, _ := manager.GetOrCreate(ctx, numpool.Config{ID: "pool2", MaxResourcesCount: 10})
+
+// Closing the manager closes all managed pools but leaves the database pool open
+manager.Close()
+
+// Check if manager/pools are closed
+if manager.Closed() {
+    log.Println("Manager is closed")
+}
+if pool1.Closed() {
+    log.Println("Pool1 is closed")
+}
+```
+
+## Close vs Delete Operations
+
+Understanding the difference between closing and deleting pools:
+
+| Operation | Scope | Database Record | Use Case |
+|-----------|-------|-----------------|----------|
+| `pool.Close()` | Instance only | **Preserved** | Stop listening, release resources, but keep pool definition |
+| `manager.Close()` | All managed pools | **Preserved** | Shutdown manager, close all pools, but keep all pool definitions |
+| `manager.Delete(ctx, poolID)` | Database record | **Removed** | Close managed pool and permanently delete from database |
+
+```go
+// Example: Close vs Delete
+manager, _ := numpool.Setup(ctx, dbPool)
+pool, _ := manager.GetOrCreate(ctx, numpool.Config{ID: "example", MaxResourcesCount: 5})
+
+// Option 1: Close the pool instance (database record remains)
+pool.Close()
+// Pool is closed, but another manager can still access the same pool:
+newPool, _ := manager.GetOrCreate(ctx, numpool.Config{ID: "example", MaxResourcesCount: 5})
+
+// Option 2: Delete the pool from database (closes pool and permanent removal)
+err := manager.Delete(ctx, "example")
+// Pool is closed and its definition is completely removed from the database
+```
+
+**Important Notes**: 
+- The Manager and Numpool instances do **NOT** close the underlying `pgxpool.Pool` when their `Close()` methods are called. The database connection pool lifecycle is the caller's responsibility. This design allows multiple managers to share the same database pool and gives you full control over when to close the database connections.
+- **Close vs Delete**: `Close()` methods only stop instances and release resources but **preserve database records**. Use `manager.Delete(ctx, poolID)` to close a managed pool and permanently remove it from the database.
+- **Manager Delete Restriction**: `manager.Delete()` only works on pools that were created by that specific manager instance. It will return an error if you try to delete a pool that exists in the database but was created by a different manager.
 
 ## Testing
 
