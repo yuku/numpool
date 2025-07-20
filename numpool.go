@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgxlisten"
 	"github.com/yuku/numpool/internal/sqlc"
 	"github.com/yuku/numpool/internal/waitqueue"
@@ -23,7 +22,7 @@ type Numpool struct {
 	// metadata is optional metadata associated with the pool.
 	metadata json.RawMessage
 
-	pool *pgxpool.Pool
+	manager *Manager
 
 	// listenHandler is used to handle LISTEN/NOTIFY notifications for this pool.
 	// It is set when the pool is created and used to listen for resource availability.
@@ -59,19 +58,18 @@ func (p *Numpool) Listen(ctx context.Context) error {
 		p.mu.Unlock()
 		return fmt.Errorf("listener for pool %s is already running", p.id)
 	}
-
 	ctx, p.cancelListen = context.WithCancel(ctx)
+	p.mu.Unlock()
 	defer func() {
 		p.mu.Lock()
 		p.cancelListen = nil
 		p.mu.Unlock()
 	}()
-	p.mu.Unlock()
 
 	// Create listener for LISTEN/NOTIFY
 	listener := &pgxlisten.Listener{
 		Connect: func(ctx context.Context) (*pgx.Conn, error) {
-			config := p.pool.Config().ConnConfig.Copy()
+			config := p.manager.pool.Config().ConnConfig.Copy()
 			return pgx.ConnectConfig(ctx, config)
 		},
 	}
@@ -88,6 +86,9 @@ func (p *Numpool) Listen(ctx context.Context) error {
 	listener.Handle(p.channelName(), handler)
 
 	if err := listener.Listen(ctx); err != nil {
+		p.manager.remove(p)
+		p.Close()
+
 		// If the context is cancelled, we can ignore the error.
 		if errors.Is(err, context.Canceled) {
 			return nil // Listener was cancelled, nothing to do
@@ -148,7 +149,7 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 		return nil, fmt.Errorf("cannot acquire resource from closed pool %s", p.id)
 	}
 
-	tx, err := p.pool.Begin(ctx)
+	tx, err := p.manager.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -231,7 +232,7 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 
 func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) error {
 	// Remove the client from the wait queue
-	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
 		queries := sqlc.New(tx)
 		if _, err := queries.GetNumpoolForUpdate(ctx, p.id); err != nil {
 			return fmt.Errorf("failed to get numpool with lock: %w", err)
@@ -246,7 +247,7 @@ func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) erro
 func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*Resource, error) {
 	var resourceIndex int
 
-	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
 		queries := sqlc.New(tx)
 
 		// Get the pool with lock
@@ -301,7 +302,7 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 
 // release releases a resource back to the pool.
 func (p *Numpool) release(ctx context.Context, r *Resource) error {
-	return pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 
 		// Get the pool with lock
@@ -348,7 +349,7 @@ func (p *Numpool) channelName() string {
 // It returns an error if the update fails or if the metadata has been modified by another transaction.
 // Pass nil to set the metadata to null in the database.
 func (m *Numpool) UpdateMetadata(ctx context.Context, metadata json.RawMessage) error {
-	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, m.manager.pool, func(tx pgx.Tx) error {
 		q := sqlc.New(tx)
 
 		// Get the pool with lock

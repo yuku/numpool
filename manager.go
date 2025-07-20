@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"slices"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -129,37 +129,37 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 		return nil, fmt.Errorf("failed to create: %w", err)
 	}
 
-	resource := &Numpool{
+	result := &Numpool{
 		id:            conf.ID,
 		metadata:      metadata,
-		pool:          m.pool,
+		manager:       m,
 		listenHandler: &waitqueue.ListenHandler{},
 	}
 
 	if !conf.NoStartListening {
 		// Start listening in a separate goroutine
 		go func() {
-			if err := resource.Listen(ctx); err != nil {
-				// If listen fails, remove from tracking and close the resource
-				m.mu.Lock()
-				for i, np := range m.numpools {
-					if np.id == resource.id {
-						m.numpools = append(m.numpools[:i], m.numpools[i+1:]...)
-						break
-					}
-				}
-				m.mu.Unlock()
-				resource.Close()
-				log.Printf("Numpool %s listener failed: %v", resource.id, err)
+			if err := result.Listen(ctx); err != nil {
+				// panic in the goroutine will terminate the entire program. If this is
+				// not desired, set NoStartListening to true and call Listen explicitly.
+				panic(err)
 			}
 		}()
 	}
 
 	m.mu.Lock()
-	m.numpools = append(m.numpools, resource)
+	m.numpools = append(m.numpools, result)
 	m.mu.Unlock()
 
-	return resource, nil
+	return result, nil
+}
+
+func (m *Manager) remove(pool *Numpool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.numpools = slices.DeleteFunc(m.numpools, func(np *Numpool) bool {
+		return np.id == pool.id
+	})
 }
 
 func (m *Manager) createIfNotExists(ctx context.Context, conf Config) (json.RawMessage, error) {
