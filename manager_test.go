@@ -370,6 +370,26 @@ func TestManager_Close(t *testing.T) {
 	})
 }
 
+func TestCleanup(t *testing.T) {
+	ctx := context.Background()
+	pool := internal.MustGetPoolWithCleanup(t)
+
+	// Given: a manager setup with a connection pool
+	_, err := numpool.Setup(ctx, pool)
+	require.NoError(t, err, "Setup should not return an error")
+	exists, err := sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
+	assert.True(t, exists, "Numpool table should not exist after Cleanup")
+
+	// When: cleanup the manager
+	require.NoError(t, numpool.Cleanup(ctx, pool))
+
+	// Then: that the numpools table is dropped
+	exists, err = sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
+	assert.False(t, exists, "Numpool table should not exist after Cleanup")
+}
+
 func TestManager_Cleanup(t *testing.T) {
 	ctx := context.Background()
 	pool := internal.MustGetPoolWithCleanup(t)

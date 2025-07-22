@@ -268,17 +268,20 @@ func (m *Manager) Delete(ctx context.Context, poolID string) error {
 	return nil
 }
 
+// Cleanup drops the numpool table in the database.
+// It is used to clean up the database schema when the manager is no longer needed.
+func Cleanup(ctx context.Context, pool *pgxpool.Pool) error {
+	if err := sqlc.New(pool).DropNumpoolTable(ctx); err != nil {
+		return fmt.Errorf("failed to drop numpool table: %w", err)
+	}
+	return nil
+}
+
 // Cleanup removes all Numpool instances managed by this manager.
 // It drops the numpool table in the database if it exists.
 func (m *Manager) Cleanup(ctx context.Context) error {
 	if !m.Closed() {
 		m.Close()
 	}
-
-	// Drop the numpool table in the database
-	if err := sqlc.New(m.pool).DropNumpoolTable(ctx); err != nil {
-		return fmt.Errorf("failed to drop numpool table: %w", err)
-	}
-
-	return nil
+	return Cleanup(ctx, m.pool)
 }
