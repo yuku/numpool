@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func TestNumpool_Delete(t *testing.T) {
 		assert.NotNil(t, model, "GetOrCreate should return a valid Numpool instance")
 
 		// When
-		err = model.Delete(ctx)
+		err = manager.Delete(ctx, model.ID())
 
 		// Then
 		assert.NoError(t, err, "Delete should not return an error")
@@ -39,13 +40,51 @@ func TestNumpool_Delete(t *testing.T) {
 		assert.NoError(t, err, "CheckNumpoolExists should not return an error after deletion")
 		assert.False(t, exists, "Numpool should not exist after deletion")
 
+		// Verify the pool instance is closed
+		assert.True(t, model.Closed(), "Pool should be closed after deletion")
+
 		t.Run("returns error for non-existing pool", func(t *testing.T) {
-			// When
-			err := model.Delete(ctx)
+			// When (pool was already deleted in parent test)
+			err := manager.Delete(ctx, model.ID())
 
 			// Then
 			assert.Error(t, err, "Delete should return an error for non-existing pool")
+			assert.Contains(t, err.Error(), "is not managed by this manager", "Error should indicate pool is not managed")
 		})
+	})
+
+	t.Run("returns error when pool exists in DB but not managed by this manager", func(t *testing.T) {
+		// Given: Create a pool with one manager
+		conf := numpool.Config{
+			ID:                "unmanaged-pool",
+			MaxResourcesCount: 3,
+		}
+
+		manager1, err := numpool.Setup(ctx, pool)
+		require.NoError(t, err, "Setup should not return an error")
+
+		_, err = manager1.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+
+		// Create a different manager that doesn't manage this pool
+		manager2, err := numpool.Setup(ctx, pool)
+		require.NoError(t, err, "Setup should not return an error")
+
+		// When: Try to delete with manager2 (pool exists in DB but not managed by manager2)
+		err = manager2.Delete(ctx, conf.ID)
+
+		// Then: Should return error indicating pool is not managed
+		assert.Error(t, err, "Delete should return an error for unmanaged pool")
+		assert.Contains(t, err.Error(), "is not managed by this manager", "Error should indicate pool is not managed")
+
+		// Verify pool still exists in database
+		exists, err := queries.CheckNumpoolExists(ctx, conf.ID)
+		assert.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, exists, "Pool should still exist in database after failed delete")
+
+		// Cleanup: Delete with the managing manager
+		err = manager1.Delete(ctx, conf.ID)
+		assert.NoError(t, err, "Delete should succeed with managing manager")
 	})
 }
 
@@ -68,7 +107,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// Verify initial metadata
 		var initial map[string]string
@@ -113,7 +152,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		require.NoError(t, err, "GetOrCreate should not return an error")
 
 		// Delete the pool
-		err = model.Delete(ctx)
+		err = manager.Delete(ctx, model.ID())
 		require.NoError(t, err, "Delete should not return an error")
 
 		// When - try to update metadata of deleted pool
@@ -134,7 +173,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// When - try to update with invalid JSON
 		// Use invalid JSON directly since we can't marshal circular references
@@ -153,7 +192,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// When - update with nil metadata
 		err = model.UpdateMetadata(ctx, nil)
@@ -171,7 +210,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model.ID()) })
 
 		// When - update with empty map
 		emptyMap := make(map[string]string)
@@ -199,7 +238,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model1, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model1.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model1.ID()) })
 
 		// Get a second instance of the same pool
 		model2, err := manager.GetOrCreate(ctx, numpool.Config{
@@ -242,7 +281,7 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		}
 		model1, err := manager.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
-		t.Cleanup(func() { _ = model1.Delete(ctx) })
+		t.Cleanup(func() { _ = manager.Delete(ctx, model1.ID()) })
 
 		// Get a second instance of the same pool
 		model2, err := manager.GetOrCreate(ctx, numpool.Config{
@@ -271,5 +310,88 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 		err = json.Unmarshal(model1.Metadata(), &result1)
 		require.NoError(t, err, "Should unmarshal model1 metadata")
 		assert.Equal(t, metadata1, result1, "Model1 metadata should be unchanged")
+	})
+}
+
+func TestNumpool_Close(t *testing.T) {
+	ctx := context.Background()
+	connPool := internal.MustGetPoolWithCleanup(t)
+
+	t.Run("closes the numpool and releases resources without closing underlying connection pool", func(t *testing.T) {
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(manager.Close)
+
+		// Given: a Numpool instance and acquire a resource
+		config := numpool.Config{ID: "numpool-close", MaxResourcesCount: 1}
+		np, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		t.Cleanup(cancel)
+		resource, err := np.Acquire(ctxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error")
+
+		// When: close the Numpool
+		np.Close()
+
+		// Then: the underlying connection pool should still be operational
+		assert.NotNil(t, connPool, "Pool should not be nil after manager close")
+		assert.NoError(t, connPool.Ping(ctx), "Pool should still be operational after manager close")
+		exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
+		assert.NoError(t, err, "CheckNumpoolTableExist should not return an error after manager close")
+		assert.True(t, exists, "Numpool table should still exist after manager close")
+
+		// Then: the Numpool should be closed and the resource should be released
+		assert.True(t, np.Closed(), "Numpool should be closed after Close()")
+		assert.True(t, resource.Closed(), "Resource should be closed after Numpool close")
+
+		// Verify that the resource can be acquired
+		otherNp, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error for existing pool")
+		ctxWithTimeout, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+		t.Cleanup(cancel)
+		otherResource, err := otherNp.Acquire(ctxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error for new resource")
+		assert.NotNil(t, otherResource, "Should acquire a new resource from the same pool")
+	})
+
+	t.Run("does not delete the numpool record from database", func(t *testing.T) {
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(manager.Close)
+
+		// Given: a Numpool instance without auto-starting listener to avoid race condition
+		config := numpool.Config{ID: "numpool-close-no-delete", MaxResourcesCount: 3, NoStartListening: true}
+		np, err := manager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+
+		// Verify the pool exists in the database before closing
+		queries := sqlc.New(connPool)
+		existsBefore, err := queries.CheckNumpoolExists(ctx, config.ID)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, existsBefore, "Pool should exist in database before close")
+
+		// When: close the Numpool (this should NOT delete the database record)
+		np.Close()
+
+		// Then: the database record should still exist
+		existsAfter, err := queries.CheckNumpoolExists(ctx, config.ID)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error after close")
+		assert.True(t, existsAfter, "Pool record should still exist in database after Close()")
+
+		// Verify we can still get the pool data from database
+		poolData, err := queries.GetNumpool(ctx, config.ID)
+		require.NoError(t, err, "GetNumpool should not return an error after close")
+		assert.Equal(t, config.ID, poolData.ID, "Pool ID should match")
+		assert.Equal(t, config.MaxResourcesCount, poolData.MaxResourcesCount, "MaxResourcesCount should match")
+
+		// Verify that a new manager can still access the existing pool
+		otherManager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(otherManager.Close)
+
+		otherNp, err := otherManager.GetOrCreate(ctx, config)
+		require.NoError(t, err, "GetOrCreate should work with existing pool record")
+		assert.Equal(t, config.ID, otherNp.ID(), "Pool ID should match existing record")
 	})
 }
