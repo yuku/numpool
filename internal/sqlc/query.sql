@@ -85,3 +85,7 @@ LOCK TABLE numpools IN SHARE ROW EXCLUSIVE MODE;
 
 -- name: AcquireAdvisoryLock :exec
 SELECT pg_advisory_xact_lock(@lock_id);
+
+-- name: DropNumpoolTable :exec
+-- DropNumpoolTable drops the numpool table if it exists.
+DROP TABLE IF EXISTS numpools;
