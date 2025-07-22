@@ -369,6 +369,11 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create pool")
 
+	// Wait for listener to start up
+	require.Eventually(t, func() bool {
+		return pool.Listening()
+	}, 1*time.Second, 10*time.Millisecond, "listener should start")
+
 	// Use a wait group to track all goroutines
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
@@ -389,6 +394,7 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 			// Try to acquire a resource
 			resources[id], errors[id] = pool.Acquire(ctx)
 			if errors[id] != nil {
+				t.Logf("goroutine %d failed to acquire: %v", id, errors[id])
 				return
 			}
 
@@ -403,6 +409,7 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 			if err != nil {
 				t.Logf("goroutine %d failed to release: %v", id, err)
 			}
+
 		}(i)
 	}
 
@@ -428,6 +435,7 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 
 	// Release first resource and wait for next acquisition
 	releaseResource <- acquired[0]
+
 	select {
 	case id := <-holdResource:
 		t.Logf("goroutine %d acquired resource (batch 2)", id)
@@ -437,6 +445,7 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 
 	// Release second resource and wait for next acquisition
 	releaseResource <- acquired[1]
+
 	select {
 	case id := <-holdResource:
 		t.Logf("goroutine %d acquired resource (batch 3)", id)
