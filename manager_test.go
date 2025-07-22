@@ -369,3 +369,27 @@ func TestManager_Close(t *testing.T) {
 		assert.Equal(t, 0, otherResource.Index(), "Resource index should be 0 for single resource pool")
 	})
 }
+
+func TestManager_Cleanup(t *testing.T) {
+	ctx := context.Background()
+	pool := internal.MustGetPoolWithCleanup(t)
+
+	// Given: a manager setup with a connection pool
+	manager, err := numpool.Setup(ctx, pool)
+	require.NoError(t, err, "Setup should not return an error")
+
+	// When: cleanup the manager
+	require.NoError(t, manager.Cleanup(ctx))
+
+	// Then: the manager should be closed
+	assert.True(t, manager.Closed(), "Manager should be closed after Cleanup")
+
+	// Verify that the underlying connection pool is still operational
+	assert.NotNil(t, pool, "Pool should not be nil after Cleanup")
+	assert.NoError(t, pool.Ping(ctx), "Pool should still be operational after Cleanup")
+
+	// Verify that the numpools table is dropped
+	exists, err := sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
+	assert.False(t, exists, "Numpool table should not exist after Cleanup")
+}

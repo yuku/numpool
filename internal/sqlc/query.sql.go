@@ -130,6 +130,16 @@ func (q *Queries) DeleteNumpool(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const dropNumpoolTable = `-- name: DropNumpoolTable :exec
+DROP TABLE IF EXISTS numpools
+`
+
+// DropNumpoolTable drops the numpool table if it exists.
+func (q *Queries) DropNumpoolTable(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, dropNumpoolTable)
+	return err
+}
+
 const enqueueWaitingClient = `-- name: EnqueueWaitingClient :exec
 UPDATE numpools
 SET wait_queue = array_append(wait_queue, $2::VARCHAR(100))

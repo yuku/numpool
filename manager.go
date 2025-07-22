@@ -267,3 +267,18 @@ func (m *Manager) Delete(ctx context.Context, poolID string) error {
 	}
 	return nil
 }
+
+// Cleanup removes all Numpool instances managed by this manager.
+// It drops the numpool table in the database if it exists.
+func (m *Manager) Cleanup(ctx context.Context) error {
+	if !m.Closed() {
+		m.Close()
+	}
+
+	// Drop the numpool table in the database
+	if err := sqlc.New(m.pool).DropNumpoolTable(ctx); err != nil {
+		return fmt.Errorf("failed to drop numpool table: %w", err)
+	}
+
+	return nil
+}
