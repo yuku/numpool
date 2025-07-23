@@ -3,6 +3,7 @@ package numpool_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -394,4 +395,52 @@ func TestNumpool_Close(t *testing.T) {
 		require.NoError(t, err, "GetOrCreate should work with existing pool record")
 		assert.Equal(t, config.ID, otherNp.ID(), "Pool ID should match existing record")
 	})
+}
+
+func TestNumpool_WithLock(t *testing.T) {
+	ctx := context.Background()
+	connPool := internal.MustGetPoolWithCleanup(t)
+
+	n := 5
+
+	numpools := make([]*numpool.Numpool, 0, n)
+	for range n {
+		manager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		t.Cleanup(manager.Close)
+
+		np, err := manager.GetOrCreate(ctx, numpool.Config{
+			ID:                "with-lock",
+			MaxResourcesCount: 1,
+		})
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		numpools = append(numpools, np)
+	}
+
+	wg := sync.WaitGroup{}
+	count := 0
+	m := 5
+
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range m {
+				err := numpools[i].WithLock(ctx, func() error {
+					require.Equal(t, 0, count)
+					count++
+					require.Equal(t, 1, count)
+					time.Sleep(10 * time.Millisecond) // Simulate some work
+					require.Equal(t, 1, count)
+					count--
+					require.Equal(t, 0, count)
+					return nil
+				})
+				require.NoError(t, err, "WithLock should not return an error")
+			}
+		}()
+	}
+
+	wg.Wait()
+	assert.Equal(t, 0, count, "Count should be zero after all goroutines complete")
 }
