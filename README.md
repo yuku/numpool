@@ -206,6 +206,13 @@ if pool.Closed() {
     log.Println("Pool is closed")
 }
 
+// Run a function exclusively across all pool instances with the same ID
+err := pool.WithLock(ctx, func() error {
+    // This function runs exclusively - only one instance
+    // across all processes can execute this at a time
+    return doSomethingExclusive()
+})
+
 // Manually close a pool (stops listening and releases resources)
 pool.Close()
 ```

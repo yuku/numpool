@@ -230,6 +230,17 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 	return p.acquireAsFirstInQueue(ctx, waiterID)
 }
 
+// WithLock runs a function exclusively across all numpool instances with
+// the same ID.
+func (p *Numpool) WithLock(ctx context.Context, fn func() error) error {
+	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+		if _, err := sqlc.New(tx).GetNumpoolForUpdate(ctx, p.id); err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+		return fn()
+	})
+}
+
 func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) error {
 	// Remove the client from the wait queue
 	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
