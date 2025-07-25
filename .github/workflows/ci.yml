@@ -39,8 +39,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
           --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=1024m
-          -c max_connections=200
-          -c shared_buffers=256MB
 
     steps:
     - uses: actions/checkout@v4
@@ -49,6 +47,22 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
+
+    - name: Configure PostgreSQL max connections
+      run: |
+        # Create a custom postgresql.conf with higher max_connections
+        sudo docker exec ${{ job.services.postgres.id }} bash -c "
+          echo 'max_connections = 200' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'shared_buffers = 256MB' >> /var/lib/postgresql/data/postgresql.conf
+        "
+        # Restart PostgreSQL to apply the new configuration
+        sudo docker restart ${{ job.services.postgres.id }}
+
+        # Wait for PostgreSQL to be ready again
+        until pg_isready -h localhost -p 5432 -U postgres; do
+          echo "Waiting for PostgreSQL to restart..."
+          sleep 2
+        done
 
     - name: Run main tests
       run: go test -json -race -timeout 30s ./... | go tool tparse -all
