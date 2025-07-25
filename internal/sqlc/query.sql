@@ -89,3 +89,10 @@ SELECT pg_advisory_xact_lock(@lock_id);
 -- name: DropNumpoolTable :exec
 -- DropNumpoolTable drops the numpool table if it exists.
 DROP TABLE IF EXISTS numpools;
+
+-- name: ListPools :many
+-- ListPools returns a list of pool names that start with the given prefix.
+-- If prefix is empty, returns all pools ordered by pool name.
+SELECT id FROM numpools
+WHERE id LIKE @prefix || '%'
+ORDER BY id;
