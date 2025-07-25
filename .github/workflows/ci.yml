@@ -61,7 +61,7 @@ jobs:
           cp /var/lib/postgresql/data/postgresql.conf /var/lib/postgresql/data/postgresql.conf.backup
           
           # Create a new minimal config with our required settings
-          cat > /var/lib/postgresql/data/postgresql.conf << 'EOF'
+          cat > /var/lib/postgresql/data/postgresql.conf << PGCONF
 # PostgreSQL configuration file for CI tests
 # Minimal configuration with high connection limits
 
@@ -99,7 +99,7 @@ ident_file = '/var/lib/postgresql/data/pg_ident.conf'
 
 # Include other config files if they exist
 include_if_exists = 'postgresql.auto.conf'
-EOF
+PGCONF
         "
         
         echo "📝 Verifying new configuration file:"
