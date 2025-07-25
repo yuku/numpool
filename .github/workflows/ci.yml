@@ -54,33 +54,62 @@ jobs:
         PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW max_connections;"
         PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW shared_buffers;"
         
-        echo "🛠️ Modifying postgresql.conf with sed to replace existing values..."
-        # Use sed to replace the existing max_connections and shared_buffers values
+        echo "🛠️ Creating new postgresql.conf with higher limits..."
+        # Create a completely new postgresql.conf file with our settings
         docker exec ${{ job.services.postgres.id }} bash -c "
           # Backup the original config
           cp /var/lib/postgresql/data/postgresql.conf /var/lib/postgresql/data/postgresql.conf.backup
           
-          # Replace the existing settings
-          sed -i 's/^max_connections = [0-9]*/max_connections = 200/' /var/lib/postgresql/data/postgresql.conf
-          sed -i 's/^shared_buffers = [0-9A-Za-z]*/shared_buffers = 256MB/' /var/lib/postgresql/data/postgresql.conf
-          
-          # If the settings were commented out, add them explicitly
-          if ! grep -q '^max_connections = 200' /var/lib/postgresql/data/postgresql.conf; then
-            echo 'max_connections = 200' >> /var/lib/postgresql/data/postgresql.conf
-          fi
-          if ! grep -q '^shared_buffers = 256MB' /var/lib/postgresql/data/postgresql.conf; then
-            echo 'shared_buffers = 256MB' >> /var/lib/postgresql/data/postgresql.conf
-          fi
+          # Create a new minimal config with our required settings
+          cat > /var/lib/postgresql/data/postgresql.conf << 'EOF'
+# PostgreSQL configuration file for CI tests
+# Minimal configuration with high connection limits
+
+# Connection Settings
+listen_addresses = '*'
+port = 5432
+max_connections = 200
+
+# Memory Settings  
+shared_buffers = 256MB
+dynamic_shared_memory_type = posix
+
+# Write Ahead Log
+wal_level = replica
+max_wal_size = 1GB
+min_wal_size = 80MB
+
+# Logging
+log_timezone = 'Etc/UTC'
+
+# Locale and Formatting
+datestyle = 'iso, mdy'
+timezone = 'Etc/UTC'
+lc_messages = 'en_US.utf8'
+lc_monetary = 'en_US.utf8' 
+lc_numeric = 'en_US.utf8'
+lc_time = 'en_US.utf8'
+
+# Default text search config
+default_text_search_config = 'pg_catalog.english'
+
+# Authentication
+hba_file = '/var/lib/postgresql/data/pg_hba.conf'
+ident_file = '/var/lib/postgresql/data/pg_ident.conf'
+
+# Include other config files if they exist
+include_if_exists = 'postgresql.auto.conf'
+EOF
         "
         
-        echo "📝 Verifying configuration changes:"
+        echo "📝 Verifying new configuration file:"
         docker exec ${{ job.services.postgres.id }} grep -E "max_connections|shared_buffers" /var/lib/postgresql/data/postgresql.conf
         
-        echo "🔄 Restarting PostgreSQL to apply configuration..."
+        echo "🔄 Restarting PostgreSQL to apply new configuration..."
         docker restart ${{ job.services.postgres.id }}
         
         echo "⏳ Waiting for PostgreSQL to restart..."
-        sleep 10
+        sleep 15
         until pg_isready -h localhost -p 5432 -U postgres; do
           echo "Still waiting for PostgreSQL to restart..."
           sleep 3
