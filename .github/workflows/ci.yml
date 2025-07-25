@@ -50,21 +50,34 @@ jobs:
 
     - name: Configure PostgreSQL max connections
       run: |
-        # Create a custom postgresql.conf with higher max_connections
-        docker exec ${{ job.services.postgres.id }} bash << EOF
-          sed -i \
-            -e 's/max_connections = 100/max_connections = 10000/' \
-            /var/lib/postgresql/data/postgresql.conf
-        EOF
+        # First, check the current postgresql.conf content
+        echo "🔍 Checking current postgresql.conf content..."
+        docker exec ${{ job.services.postgres.id }} cat /var/lib/postgresql/data/postgresql.conf | grep -E "max_connections|shared_buffers" || echo "No existing max_connections/shared_buffers found"
+        
+        # Add our configuration to the end of postgresql.conf
+        docker exec ${{ job.services.postgres.id }} bash -c "
+          echo '' >> /var/lib/postgresql/data/postgresql.conf
+          echo '# Custom configuration for CI tests' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'max_connections = 200' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'shared_buffers = 256MB' >> /var/lib/postgresql/data/postgresql.conf
+        "
+        
+        # Verify the configuration was added
+        echo "📝 Configuration added to postgresql.conf:"
+        docker exec ${{ job.services.postgres.id }} tail -5 /var/lib/postgresql/data/postgresql.conf
 
         # Restart PostgreSQL to apply the new configuration
+        echo "🔄 Restarting PostgreSQL..."
         docker restart ${{ job.services.postgres.id }}
 
         # Wait for PostgreSQL to be ready again
+        echo "⏳ Waiting for PostgreSQL to restart..."
+        sleep 5
         until pg_isready -h localhost -p 5432 -U postgres; do
-          echo "Waiting for PostgreSQL to restart..."
+          echo "Still waiting for PostgreSQL to restart..."
           sleep 2
         done
+        echo "✅ PostgreSQL restarted successfully"
 
     - name: Verify PostgreSQL configuration
       run: |
