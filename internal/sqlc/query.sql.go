@@ -7,6 +7,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const acquireAdvisoryLock = `-- name: AcquireAdvisoryLock :exec
@@ -191,6 +193,34 @@ func (q *Queries) GetNumpoolForUpdate(ctx context.Context, id string) (Numpool, 
 		&i.Metadata,
 	)
 	return i, err
+}
+
+const listPools = `-- name: ListPools :many
+SELECT id FROM numpools
+WHERE id LIKE $1 || '%'
+ORDER BY id
+`
+
+// ListPools returns a list of pool names that start with the given prefix.
+// If prefix is empty, returns all pools ordered by pool name.
+func (q *Queries) ListPools(ctx context.Context, prefix pgtype.Text) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPools, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockNumpoolTableInShareMode = `-- name: LockNumpoolTableInShareMode :exec

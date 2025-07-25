@@ -48,6 +48,91 @@ jobs:
       with:
         go-version-file: go.mod
 
+    - name: Configure PostgreSQL max connections
+      run: |
+        echo "🔍 Checking current PostgreSQL configuration..."
+        PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW max_connections;"
+        PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW shared_buffers;"
+
+        echo "🛠️ Creating new postgresql.conf with higher limits..."
+        # Create a completely new postgresql.conf file with our settings
+        docker exec ${{ job.services.postgres.id }} bash -c "
+          # Backup the original config
+          cp /var/lib/postgresql/data/postgresql.conf /var/lib/postgresql/data/postgresql.conf.backup
+
+          # Create a new minimal config with our required settings
+          cat > /var/lib/postgresql/data/postgresql.conf << PGCONF
+          # PostgreSQL configuration file for CI tests
+          # Minimal configuration with high connection limits
+
+          # Connection Settings
+          listen_addresses = '*'
+          port = 5432
+          max_connections = 200
+
+          # Memory Settings
+          shared_buffers = 256MB
+          dynamic_shared_memory_type = posix
+
+          # Write Ahead Log
+          wal_level = replica
+          max_wal_size = 1GB
+          min_wal_size = 80MB
+
+          # Logging
+          log_timezone = 'Etc/UTC'
+
+          # Locale and Formatting
+          datestyle = 'iso, mdy'
+          timezone = 'Etc/UTC'
+          lc_messages = 'en_US.utf8'
+          lc_monetary = 'en_US.utf8'
+          lc_numeric = 'en_US.utf8'
+          lc_time = 'en_US.utf8'
+
+          # Default text search config
+          default_text_search_config = 'pg_catalog.english'
+
+          # Authentication
+          hba_file = '/var/lib/postgresql/data/pg_hba.conf'
+          ident_file = '/var/lib/postgresql/data/pg_ident.conf'
+
+          # Include other config files if they exist
+          include_if_exists = 'postgresql.auto.conf'
+          PGCONF
+        "
+
+        echo "📝 Verifying new configuration file:"
+        docker exec ${{ job.services.postgres.id }} grep -E "max_connections|shared_buffers" /var/lib/postgresql/data/postgresql.conf
+
+        echo "🔄 Restarting PostgreSQL to apply new configuration..."
+        docker restart ${{ job.services.postgres.id }}
+
+        echo "⏳ Waiting for PostgreSQL to restart..."
+        sleep 15
+        until pg_isready -h localhost -p 5432 -U postgres; do
+          echo "Still waiting for PostgreSQL to restart..."
+          sleep 3
+        done
+        echo "✅ PostgreSQL restarted successfully"
+
+    - name: Verify PostgreSQL configuration
+      run: |
+        echo "🔍 Verifying PostgreSQL max_connections setting..."
+        PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW max_connections;"
+        PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW shared_buffers;"
+
+        # Check that max_connections is actually set to a high value
+        MAX_CONN=$(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -t -c "SHOW max_connections;" | xargs)
+        echo "📊 Current max_connections: $MAX_CONN"
+
+        # Verify it's at least 200 (should be 10000 based on the sed command)
+        if [ "$MAX_CONN" -lt "200" ]; then
+          echo "❌ ERROR: max_connections is too low, got: $MAX_CONN (expected >= 200)"
+          exit 1
+        fi
+        echo "✅ PostgreSQL max_connections successfully configured: $MAX_CONN"
+
     - name: Run main tests
       run: go test -json -race -timeout 30s ./... | go tool tparse -all
 
