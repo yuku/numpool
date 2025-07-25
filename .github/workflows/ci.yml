@@ -66,6 +66,23 @@ jobs:
           sleep 2
         done
 
+    - name: Verify PostgreSQL configuration
+      run: |
+        echo "🔍 Verifying PostgreSQL max_connections setting..."
+        PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW max_connections;"
+        PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SHOW shared_buffers;"
+        
+        # Check that max_connections is actually set to a high value
+        MAX_CONN=$(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -t -c "SHOW max_connections;" | xargs)
+        echo "📊 Current max_connections: $MAX_CONN"
+        
+        # Verify it's at least 200 (should be 10000 based on the sed command)
+        if [ "$MAX_CONN" -lt "200" ]; then
+          echo "❌ ERROR: max_connections is too low, got: $MAX_CONN (expected >= 200)"
+          exit 1
+        fi
+        echo "✅ PostgreSQL max_connections successfully configured: $MAX_CONN"
+
     - name: Run main tests
       run: go test -json -race -timeout 30s ./... | go tool tparse -all
 
