@@ -52,7 +52,7 @@ jobs:
       run: |
         # Create a custom postgresql.conf with higher max_connections
         sudo docker exec ${{ job.services.postgres.id }} bash -c "
-          echo 'max_connections = 200' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'max_connections = 1000' >> /var/lib/postgresql/data/postgresql.conf
           echo 'shared_buffers = 256MB' >> /var/lib/postgresql/data/postgresql.conf
         "
         # Restart PostgreSQL to apply the new configuration
