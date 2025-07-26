@@ -60,7 +60,7 @@ func TestSingleListenerWithPostgres(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond) // Give the listener some time to start
 
-	queries := sqlc.New(internal.MustGetPoolWithCleanup(t))
+	queries := sqlc.New(connPool)
 	for i := range n {
 		go func() {
 			err := queries.NotifyWaiters(context.Background(), sqlc.NotifyWaitersParams{
@@ -126,7 +126,7 @@ func TestMultipleListenersWithPostgres(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond) // Give the listener some time to start
 
-	queries := sqlc.New(internal.MustGetPoolWithCleanup(t))
+	queries := sqlc.New(connPool)
 	for i := range n {
 		go func() {
 			err := queries.NotifyWaiters(context.Background(), sqlc.NotifyWaitersParams{

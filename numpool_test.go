@@ -10,16 +10,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool"
-	"github.com/yuku/numpool/internal"
 	"github.com/yuku/numpool/internal/sqlc"
 )
 
 func TestNumpool_Delete(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
-	queries := sqlc.New(pool)
+	queries := sqlc.New(connPool)
 
-	manager, err := numpool.Setup(ctx, pool)
+	manager, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
 
 	t.Run("deletes existing pool", func(t *testing.T) {
@@ -61,14 +59,14 @@ func TestNumpool_Delete(t *testing.T) {
 			MaxResourcesCount: 3,
 		}
 
-		manager1, err := numpool.Setup(ctx, pool)
+		manager1, err := numpool.Setup(ctx, connPool)
 		require.NoError(t, err, "Setup should not return an error")
 
 		_, err = manager1.GetOrCreate(ctx, conf)
 		require.NoError(t, err, "GetOrCreate should not return an error")
 
 		// Create a different manager that doesn't manage this pool
-		manager2, err := numpool.Setup(ctx, pool)
+		manager2, err := numpool.Setup(ctx, connPool)
 		require.NoError(t, err, "Setup should not return an error")
 
 		// When: Try to delete with manager2 (pool exists in DB but not managed by manager2)
@@ -91,7 +89,7 @@ func TestNumpool_Delete(t *testing.T) {
 
 func TestNumpool_UpdateMetadata(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
+	pool := connPool
 
 	manager, err := numpool.Setup(ctx, pool)
 	require.NoError(t, err, "Setup should not return an error")
@@ -316,7 +314,6 @@ func TestNumpool_UpdateMetadata(t *testing.T) {
 
 func TestNumpool_Close(t *testing.T) {
 	ctx := context.Background()
-	connPool := internal.MustGetPoolWithCleanup(t)
 
 	t.Run("closes the numpool and releases resources without closing underlying connection pool", func(t *testing.T) {
 		manager, err := numpool.Setup(ctx, connPool)
@@ -399,7 +396,6 @@ func TestNumpool_Close(t *testing.T) {
 
 func TestNumpool_WithLock(t *testing.T) {
 	ctx := context.Background()
-	connPool := internal.MustGetPoolWithCleanup(t)
 
 	n := 5
 

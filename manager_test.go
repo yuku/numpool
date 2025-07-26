@@ -150,10 +150,9 @@ func TestConfig_Validate(t *testing.T) {
 
 func TestManager_GetOrCreate(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
-	queries := sqlc.New(pool)
+	queries := sqlc.New(connPool)
 
-	manager, err := numpool.Setup(ctx, pool)
+	manager, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
 
 	t.Run("creates new pool if it does not exist", func(t *testing.T) {
@@ -254,8 +253,7 @@ func TestManager_GetOrCreate(t *testing.T) {
 
 func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
-	queries := sqlc.New(pool)
+	queries := sqlc.New(connPool)
 
 	n := 5  // Number of manager
 	m := 10 // Number of concurrent GetOrCreate calls per manager
@@ -274,7 +272,7 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 	for range n {
 		go func() {
-			manager, err := numpool.Setup(ctx, pool)
+			manager, err := numpool.Setup(ctx, connPool)
 			require.NoError(t, err, "Setup should not return an error")
 
 			for i := range m {
@@ -307,7 +305,6 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 func TestManager_Close(t *testing.T) {
 	ctx := context.Background()
-	connPool := internal.MustGetPoolWithCleanup(t)
 
 	t.Run("closes manager without closing underlying connection pool", func(t *testing.T) {
 		// Given: a manager setup with a connection pool
@@ -372,30 +369,28 @@ func TestManager_Close(t *testing.T) {
 
 func TestCleanup(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
 
 	// Given: a manager setup with a connection pool
-	_, err := numpool.Setup(ctx, pool)
+	_, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
-	exists, err := sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
 	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
 	assert.True(t, exists, "Numpool table should not exist after Cleanup")
 
 	// When: cleanup the manager
-	require.NoError(t, numpool.Cleanup(ctx, pool))
+	require.NoError(t, numpool.Cleanup(ctx, connPool))
 
 	// Then: that the numpools table is dropped
-	exists, err = sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	exists, err = sqlc.New(connPool).CheckNumpoolTableExist(ctx)
 	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
 	assert.False(t, exists, "Numpool table should not exist after Cleanup")
 }
 
 func TestManager_Cleanup(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
 
 	// Given: a manager setup with a connection pool
-	manager, err := numpool.Setup(ctx, pool)
+	manager, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
 
 	// When: cleanup the manager
@@ -405,11 +400,11 @@ func TestManager_Cleanup(t *testing.T) {
 	assert.True(t, manager.Closed(), "Manager should be closed after Cleanup")
 
 	// Verify that the underlying connection pool is still operational
-	assert.NotNil(t, pool, "Pool should not be nil after Cleanup")
-	assert.NoError(t, pool.Ping(ctx), "Pool should still be operational after Cleanup")
+	assert.NotNil(t, connPool, "Pool should not be nil after Cleanup")
+	assert.NoError(t, connPool.Ping(ctx), "Pool should still be operational after Cleanup")
 
 	// Verify that the numpools table is dropped
-	exists, err := sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
 	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
 	assert.False(t, exists, "Numpool table should not exist after Cleanup")
 }

@@ -1,10 +1,12 @@
 package sqlc_test
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool/internal"
 )
 
@@ -19,5 +21,8 @@ func TestMain(m *testing.M) {
 
 func mustGetPoolWithCleanup(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	return internal.MustGetPoolWithCleanup(t, testDBName)
+	pool, err := internal.GetPool(context.Background(), testDBName)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	return pool
 }
