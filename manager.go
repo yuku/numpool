@@ -295,12 +295,7 @@ func (m *Manager) ListPools(ctx context.Context, prefix string) ([]string, error
 	}
 
 	// Convert string to pgtype.Text for sqlc compatibility
-	var pgPrefix pgtype.Text
-	if prefix != "" {
-		pgPrefix = pgtype.Text{String: prefix, Valid: true}
-	} else {
-		pgPrefix = pgtype.Text{String: "", Valid: true}
-	}
+	pgPrefix := pgtype.Text{String: prefix, Valid: true}
 
 	pools, err := sqlc.New(m.pool).ListPools(ctx, pgPrefix)
 	if err != nil {
