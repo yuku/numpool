@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuku/numpool/internal/sqlc"
 	"github.com/yuku/numpool/internal/waitqueue"
@@ -275,6 +276,95 @@ func Cleanup(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("failed to drop numpool table: %w", err)
 	}
 	return nil
+}
+
+// ListPools returns a list of pool names that start with the given prefix.
+// If prefix is empty, returns all pools ordered by pool name for consistent output.
+// This function is useful for external libraries to discover existing pools.
+//
+// Example usage:
+//
+//	// List all pools
+//	allPools, err := manager.ListPools(ctx, "")
+//
+//	// List pools with specific prefix
+//	testPools, err := manager.ListPools(ctx, "test_")
+func (m *Manager) ListPools(ctx context.Context, prefix string) ([]string, error) {
+	if m.Closed() {
+		return nil, fmt.Errorf("manager is closed")
+	}
+
+	// Convert string to pgtype.Text for sqlc compatibility
+	pgPrefix := pgtype.Text{String: prefix, Valid: true}
+
+	pools, err := sqlc.New(m.pool).ListPools(ctx, pgPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pools: %w", err)
+	}
+
+	return pools, nil
+}
+
+// DeletePool completely removes a pool and all associated resources.
+// It handles cleanup of pool metadata, advisory locks, and any other pool-related data.
+// Returns an error if the pool doesn't exist or if cleanup fails.
+// This function handles graceful cleanup even if there are active connections.
+//
+// Example usage:
+//
+//	err := manager.DeletePool(ctx, "test_pool_1")
+//	if err != nil {
+//	    log.Printf("Failed to delete pool: %v", err)
+//	}
+func (m *Manager) DeletePool(ctx context.Context, poolName string) error {
+	if m.Closed() {
+		return fmt.Errorf("manager is closed")
+	}
+
+	if poolName == "" {
+		return fmt.Errorf("pool name cannot be empty")
+	}
+
+	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+
+		// First check if pool exists
+		exists, err := q.CheckNumpoolExists(ctx, poolName)
+		if err != nil {
+			return fmt.Errorf("failed to check if pool exists: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("pool %s does not exist", poolName)
+		}
+
+		// Close and remove the pool from manager's tracked pools if it exists
+		m.mu.Lock()
+		poolIndex := -1
+		var poolToClose *Numpool
+		for i, np := range m.numpools {
+			if np.id == poolName {
+				poolToClose = np
+				poolIndex = i
+				break
+			}
+		}
+		if poolToClose != nil {
+			poolToClose.Close()
+			m.numpools = append(m.numpools[:poolIndex], m.numpools[poolIndex+1:]...)
+		}
+		m.mu.Unlock()
+
+		// Delete the pool from the database
+		affected, err := q.DeleteNumpool(ctx, poolName)
+		if err != nil {
+			return fmt.Errorf("failed to delete pool from database: %w", err)
+		}
+		if affected == 0 {
+			return fmt.Errorf("pool %s was not deleted from database", poolName)
+		}
+
+		return nil
+	})
 }
 
 // Cleanup removes all Numpool instances managed by this manager.

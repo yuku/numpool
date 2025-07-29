@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yuku/numpool"
-	"github.com/yuku/numpool/internal"
 	"github.com/yuku/numpool/internal/sqlc"
 )
 
@@ -930,7 +929,7 @@ func TestPoolDeletion(t *testing.T) {
 	require.NotNil(t, resource1, "resource should not be nil")
 
 	// Delete the pool from database
-	_, err = sqlc.New(internal.MustGetPoolWithCleanup(t)).DeleteNumpool(ctx, poolID)
+	_, err = sqlc.New(connPool).DeleteNumpool(ctx, poolID)
 	require.NoError(t, err, "failed to delete pool")
 
 	// Try to acquire another resource - should fail

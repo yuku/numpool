@@ -56,16 +56,6 @@ func GetPool(ctx context.Context, dbnames ...string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func MustGetPoolWithCleanup(t testing.TB, dbnames ...string) *pgxpool.Pool {
-	t.Helper()
-	pool, err := GetPool(context.Background(), dbnames...)
-	if err != nil {
-		t.Fatalf("failed to get connection pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
-
 func getConnString(database string) string {
 	if connStr := os.Getenv("DATABASE_URL"); connStr != "" {
 		return connStr

@@ -150,10 +150,9 @@ func TestConfig_Validate(t *testing.T) {
 
 func TestManager_GetOrCreate(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
-	queries := sqlc.New(pool)
+	queries := sqlc.New(connPool)
 
-	manager, err := numpool.Setup(ctx, pool)
+	manager, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
 
 	t.Run("creates new pool if it does not exist", func(t *testing.T) {
@@ -254,8 +253,7 @@ func TestManager_GetOrCreate(t *testing.T) {
 
 func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
-	queries := sqlc.New(pool)
+	queries := sqlc.New(connPool)
 
 	n := 5  // Number of manager
 	m := 10 // Number of concurrent GetOrCreate calls per manager
@@ -274,7 +272,7 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 	for range n {
 		go func() {
-			manager, err := numpool.Setup(ctx, pool)
+			manager, err := numpool.Setup(ctx, connPool)
 			require.NoError(t, err, "Setup should not return an error")
 
 			for i := range m {
@@ -307,7 +305,6 @@ func TestManager_GetOrCreate_Concurrent(t *testing.T) {
 
 func TestManager_Close(t *testing.T) {
 	ctx := context.Background()
-	connPool := internal.MustGetPoolWithCleanup(t)
 
 	t.Run("closes manager without closing underlying connection pool", func(t *testing.T) {
 		// Given: a manager setup with a connection pool
@@ -372,30 +369,28 @@ func TestManager_Close(t *testing.T) {
 
 func TestCleanup(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
 
 	// Given: a manager setup with a connection pool
-	_, err := numpool.Setup(ctx, pool)
+	_, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
-	exists, err := sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
 	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
 	assert.True(t, exists, "Numpool table should not exist after Cleanup")
 
 	// When: cleanup the manager
-	require.NoError(t, numpool.Cleanup(ctx, pool))
+	require.NoError(t, numpool.Cleanup(ctx, connPool))
 
 	// Then: that the numpools table is dropped
-	exists, err = sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	exists, err = sqlc.New(connPool).CheckNumpoolTableExist(ctx)
 	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
 	assert.False(t, exists, "Numpool table should not exist after Cleanup")
 }
 
 func TestManager_Cleanup(t *testing.T) {
 	ctx := context.Background()
-	pool := internal.MustGetPoolWithCleanup(t)
 
 	// Given: a manager setup with a connection pool
-	manager, err := numpool.Setup(ctx, pool)
+	manager, err := numpool.Setup(ctx, connPool)
 	require.NoError(t, err, "Setup should not return an error")
 
 	// When: cleanup the manager
@@ -405,11 +400,279 @@ func TestManager_Cleanup(t *testing.T) {
 	assert.True(t, manager.Closed(), "Manager should be closed after Cleanup")
 
 	// Verify that the underlying connection pool is still operational
-	assert.NotNil(t, pool, "Pool should not be nil after Cleanup")
-	assert.NoError(t, pool.Ping(ctx), "Pool should still be operational after Cleanup")
+	assert.NotNil(t, connPool, "Pool should not be nil after Cleanup")
+	assert.NoError(t, connPool.Ping(ctx), "Pool should still be operational after Cleanup")
 
 	// Verify that the numpools table is dropped
-	exists, err := sqlc.New(pool).CheckNumpoolTableExist(ctx)
+	exists, err := sqlc.New(connPool).CheckNumpoolTableExist(ctx)
 	require.NoError(t, err, "CheckNumpoolTableExist should not return an error")
 	assert.False(t, exists, "Numpool table should not exist after Cleanup")
+}
+
+func TestManager_ListPools(t *testing.T) {
+	ctx := context.Background()
+	queries := sqlc.New(connPool)
+
+	manager, err := numpool.Setup(ctx, connPool)
+	require.NoError(t, err, "Setup should not return an error")
+
+	// Create test pools with different names
+	testPools := []string{
+		"test_pool_1",
+		"test_pool_2",
+		"production_pool_1",
+		"staging_pool_1",
+		"another_test_pool",
+	}
+
+	// Clean up any existing pools first
+	for _, poolName := range testPools {
+		_, _ = queries.DeleteNumpool(ctx, poolName)
+	}
+
+	// Create the test pools
+	for _, poolName := range testPools {
+		conf := numpool.Config{
+			ID:                poolName,
+			MaxResourcesCount: 5,
+		}
+		_, err := manager.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error for pool %s", poolName)
+	}
+
+	t.Run("lists all pools when prefix is empty", func(t *testing.T) {
+		pools, err := manager.ListPools(ctx, "")
+		require.NoError(t, err, "ListPools should not return an error")
+
+		// Should contain at least our test pools (may contain others from concurrent tests)
+		for _, expectedPool := range testPools {
+			assert.Contains(t, pools, expectedPool, "Should contain test pool %s", expectedPool)
+		}
+
+		// Verify ordering - pools should be in alphabetical order
+		if len(pools) > 1 {
+			for i := 1; i < len(pools); i++ {
+				assert.LessOrEqual(t, pools[i-1], pools[i], "Pools should be ordered alphabetically")
+			}
+		}
+	})
+
+	t.Run("lists pools with specific prefix", func(t *testing.T) {
+		pools, err := manager.ListPools(ctx, "test_")
+		require.NoError(t, err, "ListPools should not return an error")
+
+		expectedPools := []string{"test_pool_1", "test_pool_2"}
+		for _, expectedPool := range expectedPools {
+			assert.Contains(t, pools, expectedPool, "Should contain pool %s", expectedPool)
+		}
+
+		// Should not contain pools that don't match prefix
+		assert.NotContains(t, pools, "production_pool_1", "Should not contain production pool")
+		assert.NotContains(t, pools, "staging_pool_1", "Should not contain staging pool")
+
+		// "another_test_pool" should not be included as it doesn't start with "test_"
+		assert.NotContains(t, pools, "another_test_pool", "Should not contain another_test_pool")
+	})
+
+	t.Run("lists pools with prefix that matches multiple words", func(t *testing.T) {
+		pools, err := manager.ListPools(ctx, "production_")
+		require.NoError(t, err, "ListPools should not return an error")
+
+		assert.Contains(t, pools, "production_pool_1", "Should contain production pool")
+		assert.NotContains(t, pools, "test_pool_1", "Should not contain test pool")
+	})
+
+	t.Run("returns empty list for non-matching prefix", func(t *testing.T) {
+		pools, err := manager.ListPools(ctx, "nonexistent_")
+		require.NoError(t, err, "ListPools should not return an error")
+		assert.Empty(t, pools, "Should return empty list for non-matching prefix")
+	})
+
+	t.Run("returns error when manager is closed", func(t *testing.T) {
+		closedManager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		closedManager.Close()
+
+		pools, err := closedManager.ListPools(ctx, "")
+		assert.Error(t, err, "ListPools should return error when manager is closed")
+		assert.Contains(t, err.Error(), "manager is closed", "Error should indicate manager is closed")
+		assert.Nil(t, pools, "Should return nil pools on error")
+	})
+}
+
+func TestManager_DeletePool(t *testing.T) {
+	ctx := context.Background()
+	queries := sqlc.New(connPool)
+
+	manager, err := numpool.Setup(ctx, connPool)
+	require.NoError(t, err, "Setup should not return an error")
+
+	t.Run("deletes existing pool successfully", func(t *testing.T) {
+		// Create a test pool
+		poolName := "test_delete_pool_1"
+		conf := numpool.Config{
+			ID:                poolName,
+			MaxResourcesCount: 5,
+		}
+
+		// Clean up any existing pool first
+		_, _ = queries.DeleteNumpool(ctx, poolName)
+
+		numPool, err := manager.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+		require.NotNil(t, numPool, "GetOrCreate should return a valid Numpool instance")
+
+		// Verify pool exists
+		exists, err := queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, exists, "Pool should exist before deletion")
+
+		// Delete the pool
+		err = manager.DeletePool(ctx, poolName)
+		require.NoError(t, err, "DeletePool should not return an error")
+
+		// Verify pool no longer exists in database
+		exists, err = queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.False(t, exists, "Pool should not exist after deletion")
+
+		// Verify the numpool instance was closed
+		assert.True(t, numPool.Closed(), "Numpool should be closed after deletion")
+	})
+
+	t.Run("deletes pool that exists in database but not tracked by manager", func(t *testing.T) {
+		// Create a pool directly in database (bypass manager tracking)
+		poolName := "test_delete_untracked_pool"
+		err := queries.CreateNumpool(ctx, sqlc.CreateNumpoolParams{
+			ID:                poolName,
+			MaxResourcesCount: 3,
+			Metadata:          []byte(`{}`),
+		})
+		require.NoError(t, err, "CreateNumpool should not return an error")
+
+		// Verify pool exists
+		exists, err := queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, exists, "Pool should exist before deletion")
+
+		// Delete the pool
+		err = manager.DeletePool(ctx, poolName)
+		require.NoError(t, err, "DeletePool should not return an error for untracked pool")
+
+		// Verify pool no longer exists
+		exists, err = queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.False(t, exists, "Pool should not exist after deletion")
+	})
+
+	t.Run("returns error for non-existent pool", func(t *testing.T) {
+		err := manager.DeletePool(ctx, "non_existent_pool")
+		assert.Error(t, err, "DeletePool should return error for non-existent pool")
+		assert.Contains(t, err.Error(), "does not exist", "Error should indicate pool does not exist")
+	})
+
+	t.Run("returns error for empty pool name", func(t *testing.T) {
+		err := manager.DeletePool(ctx, "")
+		assert.Error(t, err, "DeletePool should return error for empty pool name")
+		assert.Contains(t, err.Error(), "pool name cannot be empty", "Error should indicate empty pool name")
+	})
+
+	t.Run("returns error when manager is closed", func(t *testing.T) {
+		closedManager, err := numpool.Setup(ctx, connPool)
+		require.NoError(t, err, "Setup should not return an error")
+		closedManager.Close()
+
+		err = closedManager.DeletePool(ctx, "some_pool")
+		assert.Error(t, err, "DeletePool should return error when manager is closed")
+		assert.Contains(t, err.Error(), "manager is closed", "Error should indicate manager is closed")
+	})
+
+	t.Run("handles pool with active resources gracefully", func(t *testing.T) {
+		// Create a test pool and acquire a resource
+		poolName := "test_delete_with_resource"
+		conf := numpool.Config{
+			ID:                poolName,
+			MaxResourcesCount: 2,
+		}
+
+		// Clean up any existing pool first
+		_, _ = queries.DeleteNumpool(ctx, poolName)
+
+		numPool, err := manager.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error")
+
+		// Acquire a resource
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		resource, err := numPool.Acquire(ctxWithTimeout)
+		require.NoError(t, err, "Acquire should not return an error")
+		require.NotNil(t, resource, "Acquire should return a valid resource")
+
+		// Delete the pool (should handle active resources gracefully)
+		err = manager.DeletePool(ctx, poolName)
+		require.NoError(t, err, "DeletePool should not return an error even with active resources")
+
+		// Verify pool no longer exists
+		exists, err := queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.False(t, exists, "Pool should not exist after deletion")
+
+		// Verify the numpool and resource were closed
+		assert.True(t, numPool.Closed(), "Numpool should be closed after deletion")
+		assert.True(t, resource.Closed(), "Resource should be closed after pool deletion")
+	})
+}
+
+func TestManager_DeletePool_Concurrent(t *testing.T) {
+	ctx := context.Background()
+	queries := sqlc.New(connPool)
+
+	manager, err := numpool.Setup(ctx, connPool)
+	require.NoError(t, err, "Setup should not return an error")
+
+	// Create multiple pools for concurrent deletion
+	poolCount := 5
+	var poolNames []string
+	for i := 0; i < poolCount; i++ {
+		poolName := fmt.Sprintf("test_concurrent_delete_%d", i)
+		poolNames = append(poolNames, poolName)
+
+		// Clean up any existing pool first
+		_, _ = queries.DeleteNumpool(ctx, poolName)
+
+		conf := numpool.Config{
+			ID:                poolName,
+			MaxResourcesCount: 3,
+		}
+		_, err := manager.GetOrCreate(ctx, conf)
+		require.NoError(t, err, "GetOrCreate should not return an error for pool %s", poolName)
+	}
+
+	// Verify all pools exist
+	for _, poolName := range poolNames {
+		exists, err := queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.True(t, exists, "Pool %s should exist before concurrent deletion", poolName)
+	}
+
+	// Delete pools concurrently
+	var wg sync.WaitGroup
+	wg.Add(poolCount)
+
+	for _, poolName := range poolNames {
+		go func(name string) {
+			defer wg.Done()
+			err := manager.DeletePool(ctx, name)
+			assert.NoError(t, err, "DeletePool should not return an error for pool %s", name)
+		}(poolName)
+	}
+
+	wg.Wait()
+
+	// Verify all pools are deleted
+	for _, poolName := range poolNames {
+		exists, err := queries.CheckNumpoolExists(ctx, poolName)
+		require.NoError(t, err, "CheckNumpoolExists should not return an error")
+		assert.False(t, exists, "Pool %s should not exist after concurrent deletion", poolName)
+	}
 }
