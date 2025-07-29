@@ -22,6 +22,7 @@ jobs:
     strategy:
       matrix:
         postgres-version: ['14', '15', '16']
+        go-version: ['1.23', '1.24']
       fail-fast: false
     services:
       postgres:
@@ -46,10 +47,10 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: go.mod
+        go-version: ${{ matrix.go-version }}
 
     - name: Run main tests
-      run: go test -json -race -timeout 30s ./... | go tool tparse -all
+      run: go test -json -race -timeout 30s ./... | go run github.com/mfridman/tparse -all
 
   golangci:
     name: Lint
@@ -58,11 +59,15 @@ jobs:
     permissions:
       pull-requests: read
       contents: read
+    strategy:
+      matrix:
+        go-version: ['1.23', '1.24']
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go-version }}
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
