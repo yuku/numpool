@@ -39,14 +39,14 @@ func TestStressTest(t *testing.T) {
 	require.NoError(t, err)
 
 	// Ensure cleanup after test
-	defer func() {
-		// Close all managers to ensure proper resource cleanup
-		for _, manager := range managers {
-			manager.Close()
-		}
-		_, err := sqlc.New(connPool).DeleteNumpool(context.Background(), poolID)
-		require.NoError(t, err, "failed to clean up test pool %s", poolID)
-	}()
+	// defer func() {
+	// 	// Close all managers to ensure proper resource cleanup
+	// 	for _, manager := range managers {
+	// 		manager.Close()
+	// 	}
+	// 	_, err := sqlc.New(connPool).DeleteNumpool(context.Background(), poolID)
+	// 	require.NoError(t, err, "failed to clean up test pool %s", poolID)
+	// }()
 
 	// Create multiple pool instances
 	pools := make([]*numpool.Numpool, numPools)
