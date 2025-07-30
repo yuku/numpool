@@ -22,9 +22,9 @@ func TestStressTest(t *testing.T) {
 	}
 
 	const managersCount = 10
-	const maxResources = 10
-	const numPools = 10
-	const numGoroutinesPerPool = 10
+	const maxResources = 3          // Tight resource constraint
+	const numPools = 15             // Good pool diversity
+	const numGoroutinesPerPool = 25 // High concurrency per pool
 
 	ctx := context.Background()
 	managers := make([]*numpool.Manager, managersCount)
