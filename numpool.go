@@ -330,7 +330,8 @@ func (p *Numpool) release(ctx context.Context, r *Resource) error {
 			return fmt.Errorf("failed to release resource: %w", err)
 		}
 		if affected == 0 {
-			return fmt.Errorf("resource was not in use")
+			// Resource was already released - this is idempotent and should not be an error
+			return nil
 		}
 
 		if len(model.WaitQueue) == 0 {

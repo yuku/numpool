@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,9 +34,18 @@ func TestStressTest(t *testing.T) {
 		require.NoError(t, err, "failed to create Numpool manager %d", i)
 	}
 
-	poolID := fmt.Sprintf("test_pool_%s", t.Name())
+	poolID := fmt.Sprintf("test_pool_%s_%d", t.Name(), time.Now().UnixNano())
 	_, err := sqlc.New(connPool).DeleteNumpool(ctx, poolID)
 	require.NoError(t, err)
+
+	// Ensure cleanup after test
+	defer func() {
+		// Close all managers to ensure proper resource cleanup
+		for _, manager := range managers {
+			manager.Close()
+		}
+		_, _ = sqlc.New(connPool).DeleteNumpool(context.Background(), poolID)
+	}()
 
 	// Create multiple pool instances
 	pools := make([]*numpool.Numpool, numPools)
