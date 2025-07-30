@@ -144,7 +144,7 @@ func TestMultipleListenersWithPostgres(t *testing.T) {
 }
 
 // TestWaitQueueStressTest performs stress testing on the waitqueue system
-// to verify reliability under high concurrent load
+// to verify reliability under high concurrent load with multiple handlers
 func TestWaitQueueStressTest(t *testing.T) {
 	t.Parallel()
 
@@ -152,10 +152,14 @@ func TestWaitQueueStressTest(t *testing.T) {
 		t.Skip("skipping waitqueue stress test in short mode")
 	}
 
-	const numWaiters = 50
-	const numNotifications = 50
+	const numWaiters = 200
+	const numNotifications = 200
+	const numHandlers = 5 // Multiple handlers to simulate multiple processes
 
-	handler := &waitqueue.ListenHandler{}
+	handlers := make([]*waitqueue.ListenHandler, numHandlers)
+	for i := range numHandlers {
+		handlers[i] = &waitqueue.ListenHandler{}
+	}
 	ctx := context.Background()
 
 	// Track successful notifications
@@ -164,10 +168,15 @@ func TestWaitQueueStressTest(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Create many waiters that will compete for notifications
+	// Distribute waiters across multiple handlers
 	for i := 0; i < numWaiters; i++ {
 		wg.Add(1)
 		go func(waiterID int) {
 			defer wg.Done()
+
+			// Use different handlers to simulate multiple processes
+			handlerIndex := waiterID % numHandlers
+			handler := handlers[handlerIndex]
 
 			waiterIDStr := fmt.Sprintf("stress-waiter-%d", waiterID)
 			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -188,45 +197,63 @@ func TestWaitQueueStressTest(t *testing.T) {
 	// Give waiters time to register
 	time.Sleep(50 * time.Millisecond)
 
-	// Start PostgreSQL listener
+	// Start multiple PostgreSQL listeners (one per handler)
 	const stressChannel = "stress_test_channel"
-	go func() {
-		listener := &pgxlisten.Listener{
-			Connect: func(ctx context.Context) (*pgx.Conn, error) {
-				return internal.GetConnection(ctx)
-			},
-		}
-		listener.Handle(stressChannel, handler)
-		_ = listener.Listen(ctx)
-	}()
-	time.Sleep(100 * time.Millisecond) // Give listener time to start
+	for i, handler := range handlers {
+		go func(handlerIndex int, h *waitqueue.ListenHandler) {
+			listener := &pgxlisten.Listener{
+				Connect: func(ctx context.Context) (*pgx.Conn, error) {
+					return internal.GetConnection(ctx)
+				},
+			}
+			listener.Handle(stressChannel, h)
+			_ = listener.Listen(ctx)
+		}(i, handler)
+	}
+	time.Sleep(100 * time.Millisecond) // Give listeners time to start
 
-	// Send notifications to waiters via PostgreSQL
+	// Send notifications to waiters via PostgreSQL in parallel
 	queries := sqlc.New(connPool)
-	go func() {
-		for i := 0; i < numNotifications; i++ {
-			// Pick a waiter to notify
-			targetWaiter := i % numWaiters // Ensure each waiter gets at least one chance
-			waiterID := fmt.Sprintf("stress-waiter-%d", targetWaiter)
+	var notifyWg sync.WaitGroup
+	
+	// Create a channel to distribute notification work
+	notificationChan := make(chan int, numNotifications)
+	for i := 0; i < numNotifications; i++ {
+		notificationChan <- i
+	}
+	close(notificationChan)
 
-			// Send PostgreSQL notification
-			_ = queries.NotifyWaiters(ctx, sqlc.NotifyWaitersParams{
-				ChannelName: stressChannel,
-				WaiterID:    waiterID,
-			})
+	// Start multiple goroutines to send notifications in parallel
+	const numNotifiers = 10
+	for i := 0; i < numNotifiers; i++ {
+		notifyWg.Add(1)
+		go func() {
+			defer notifyWg.Done()
+			for notificationID := range notificationChan {
+				// Pick a waiter to notify
+				targetWaiter := notificationID % numWaiters // Ensure each waiter gets at least one chance
+				waiterID := fmt.Sprintf("stress-waiter-%d", targetWaiter)
 
-			// Small delay between notifications
-			time.Sleep(20 * time.Millisecond)
-		}
-	}()
+				// Send PostgreSQL notification
+				_ = queries.NotifyWaiters(ctx, sqlc.NotifyWaitersParams{
+					ChannelName: stressChannel,
+					WaiterID:    waiterID,
+				})
 
+				// Small delay between notifications from this goroutine
+				time.Sleep(5 * time.Millisecond)
+			}
+		}()
+	}
+
+	notifyWg.Wait()
 	wg.Wait()
 
 	finalSuccess := atomic.LoadInt64(&successCount)
 	finalTimeout := atomic.LoadInt64(&timeoutCount)
 
-	t.Logf("Stress test results: %d successful, %d timeouts out of %d waiters",
-		finalSuccess, finalTimeout, numWaiters)
+	t.Logf("Stress test results: %d successful, %d timeouts out of %d waiters (using %d handlers, %d notifiers)",
+		finalSuccess, finalTimeout, numWaiters, numHandlers, numNotifiers)
 
 	// We expect reasonable number of successes since we cycle through all waiters
 	assert.GreaterOrEqual(t, finalSuccess, int64(numWaiters/2),
