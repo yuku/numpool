@@ -46,18 +46,18 @@ func GetPool(ctx context.Context, dbnames ...string) (*pgxpool.Pool, error) {
 	if len(dbnames) > 1 {
 		return nil, fmt.Errorf("only one database name is allowed, got %d", len(dbnames))
 	}
-	
+
 	// Parse the connection string and configure a larger pool for tests
 	config, err := pgxpool.ParseConfig(getConnString(dbnames[0]))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
-	
+
 	// Set larger pool size to handle multiple listeners and concurrent operations
 	// For stress tests with 10-20 Numpool instances each with listeners
 	config.MaxConns = 50
 	config.MinConns = 5
-	
+
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)

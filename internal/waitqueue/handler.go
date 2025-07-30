@@ -20,11 +20,16 @@ var _ pgxlisten.Handler = (*ListenHandler)(nil)
 
 // HandleNotification implements the pgxlisten.Handler interface.
 func (h *ListenHandler) HandleNotification(ctx context.Context, notification *pgconn.Notification, _ *pgx.Conn) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	callback := h.waiters[notification.Payload]
+	h.mu.RUnlock()
 
-	if callback := h.waiters[notification.Payload]; callback != nil {
-		return callback(ctx)
+	if callback != nil {
+		// Process callback asynchronously to avoid blocking the listener
+		// This is critical for high-concurrency scenarios as recommended by pgxlisten docs
+		go func() {
+			_ = callback(ctx) // Ignore callback errors to prevent blocking
+		}()
 	}
 
 	return nil
