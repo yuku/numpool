@@ -220,14 +220,27 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 	if err != nil {
 		// Remove the client from the wait queue if we failed to wait.
 		// We use a new background context here because the original context might be cancelled.
-		if err := p.removeFromWaitQueue(context.Background(), waiterID); err != nil {
-			return nil, fmt.Errorf("failed to remove client from wait queue: %w", err)
+		// Don't fail the entire operation if cleanup fails - just log the error
+		if cleanupErr := p.removeFromWaitQueue(context.Background(), waiterID); cleanupErr != nil {
+			// Log the cleanup error but don't fail the operation
+			// The waiter will remain in queue but won't cause immediate failure
+			_ = cleanupErr // TODO: Add proper logging when available
 		}
 		return nil, fmt.Errorf("failed to wait for resource: %w", err)
 	}
 
 	// At this point, we are the first in the wait queue.
-	return p.acquireAsFirstInQueue(ctx, waiterID)
+	resource, err := p.acquireAsFirstInQueue(ctx, waiterID)
+	if err != nil {
+		// If we failed to acquire as first in queue, we need to notify the next waiter
+		// because our notification was consumed but we couldn't complete the operation
+		if notifyErr := p.notifyNextWaiter(ctx, waiterID); notifyErr != nil {
+			// Log the notification error but don't fail the operation
+			_ = notifyErr // TODO: Add proper logging when available
+		}
+		return nil, err
+	}
+	return resource, nil
 }
 
 // WithLock runs a function exclusively across all numpool instances with
@@ -251,6 +264,38 @@ func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) erro
 		return queries.RemoveFromWaitQueue(ctx, sqlc.RemoveFromWaitQueueParams{
 			ID:       p.id,
 			WaiterID: waiterID,
+		})
+	})
+}
+
+func (p *Numpool) notifyNextWaiter(ctx context.Context, failedWaiterID string) error {
+	// If the current waiter failed to acquire a resource, try to notify them again
+	// or notify the next waiter if there are resources available
+	return pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
+		queries := sqlc.New(tx)
+		
+		// Get the pool with lock
+		model, err := queries.GetNumpoolForUpdate(ctx, p.id)
+		if err != nil {
+			return fmt.Errorf("failed to get numpool with lock: %w", err)
+		}
+		
+		if len(model.WaitQueue) == 0 {
+			// No waiters left, nothing to notify
+			return nil
+		}
+		
+		// Check if there are any available resources now
+		if model.FindUnusedResourceIndex() == -1 {
+			// No resources available, nothing to notify
+			return nil
+		}
+		
+		// If there are resources available, notify the first waiter in queue
+		// (which could be the same waiter who failed, giving them another chance)
+		return queries.NotifyWaiters(ctx, sqlc.NotifyWaitersParams{
+			ChannelName: p.channelName(),
+			WaiterID:    model.WaitQueue[0],
 		})
 	})
 }
