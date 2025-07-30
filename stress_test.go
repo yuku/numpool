@@ -75,7 +75,6 @@ func TestStressTest(t *testing.T) {
 				resource, err := pool.Acquire(ctx)
 				if err != nil {
 					atomic.AddInt64(&failureCount, 1)
-					t.Logf("Goroutine %d failed to acquire resource: %v", id, err)
 					return
 				}
 				defer func() {
@@ -89,23 +88,6 @@ func TestStressTest(t *testing.T) {
 	}
 
 	wg.Wait()
-
-	// Debug: Check connection pool stats and pool states after test
-	stats := connPool.Stat()
-	t.Logf("Connection pool stats: Total=%d, Idle=%d, Acquired=%d, Constructing=%d",
-		stats.TotalConns(), stats.IdleConns(), stats.AcquiredConns(), stats.ConstructingConns())
-
-	var listeningCount, closedCount int
-	for i, pool := range pools {
-		if pool.Listening() {
-			listeningCount++
-		}
-		if pool.Closed() {
-			closedCount++
-		}
-		t.Logf("Pool %d: Listening=%v, Closed=%v", i, pool.Listening(), pool.Closed())
-	}
-	t.Logf("Pool summary: %d listening, %d closed out of %d total", listeningCount, closedCount, len(pools))
 
 	assert.Equal(t, int64(numPools*numGoroutinesPerPool), successCount, "Expected all goroutines to succeed")
 	assert.Zero(t, failureCount, "Expected no failures during resource acquisition")
