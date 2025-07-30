@@ -2,7 +2,7 @@
 
 ## Test Commands
 
-- Run tests: `go test -v ./...`
+- Run tests: `go test -timeout 30s -v ./...`
 - Run formatter: `go fmt ./...`
 - Run linter: `golangci-lint run`
 - Generate SQL queries: `make`

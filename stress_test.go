@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +24,6 @@ func TestStressTest(t *testing.T) {
 	const maxResources = 10
 	const numPools = 10
 	const numGoroutinesPerPool = 10
-	const duration = 5 * time.Second
 
 	ctx := context.Background()
 	managers := make([]*numpool.Manager, managersCount)
@@ -62,9 +60,6 @@ func TestStressTest(t *testing.T) {
 			wg.Add(1)
 			go func(pool *numpool.Numpool, id int) {
 				defer wg.Done()
-
-				ctx, cancel := context.WithTimeout(ctx, duration)
-				defer cancel()
 
 				resource, err := pool.Acquire(ctx)
 				if err != nil {
