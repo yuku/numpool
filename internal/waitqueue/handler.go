@@ -35,7 +35,7 @@ func (h *ListenHandler) HandleNotification(ctx context.Context, notification *pg
 	return nil
 }
 
-// Register registers a w to receive notifications.
+// Register registers a callback to receive notifications.
 func (h *ListenHandler) Register(id string, callback func(context.Context) error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -58,7 +58,7 @@ func (h *ListenHandler) Has(id string) bool {
 	return exists
 }
 
-// Unregister unregisters a w from receiving notifications.
+// Unregister unregisters an ID from receiving notifications.
 func (h *ListenHandler) Unregister(id string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
