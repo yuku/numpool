@@ -3,7 +3,6 @@ package numpool_test
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,24 +28,15 @@ func TestStressTest(t *testing.T) {
 	ctx := context.Background()
 	managers := make([]*numpool.Manager, managersCount)
 	for i := range managersCount {
-		var err error
-		managers[i], err = numpool.Setup(ctx, connPool)
+		manager, err := numpool.Setup(ctx, connPool)
 		require.NoError(t, err, "failed to create Numpool manager %d", i)
+		t.Cleanup(manager.Close)
+		managers[i] = manager
 	}
 
 	poolID := fmt.Sprintf("test_pool_%s_%d", t.Name(), time.Now().UnixNano())
 	_, err := sqlc.New(connPool).DeleteNumpool(ctx, poolID)
 	require.NoError(t, err)
-
-	// Ensure cleanup after test
-	// defer func() {
-	// 	// Close all managers to ensure proper resource cleanup
-	// 	for _, manager := range managers {
-	// 		manager.Close()
-	// 	}
-	// 	_, err := sqlc.New(connPool).DeleteNumpool(context.Background(), poolID)
-	// 	require.NoError(t, err, "failed to clean up test pool %s", poolID)
-	// }()
 
 	// Create multiple pool instances
 	pools := make([]*numpool.Numpool, numPools)
@@ -78,9 +68,8 @@ func TestStressTest(t *testing.T) {
 					return
 				}
 				defer func() {
-					if err := resource.Release(context.Background()); err != nil {
-						log.Fatalf("failed to release resource: %v", err)
-					}
+					err := resource.Release(context.Background())
+					require.NoError(t, err, "failed to release resource")
 				}()
 				atomic.AddInt64(&successCount, 1)
 			}(pools[poolIdx], i)

@@ -72,6 +72,8 @@ func (p *Numpool) Listen(ctx context.Context) error {
 			config := p.manager.pool.Config().ConnConfig.Copy()
 			return pgx.ConnectConfig(ctx, config)
 		},
+		// Disable automatic reconnection to avoid blocking indefinitely
+		ReconnectDelay: -1,
 	}
 
 	// Check if already closed before setting up listener
@@ -120,10 +122,12 @@ func (p *Numpool) Close() {
 		p.cancelListen = nil
 	}
 
-	for _, r := range p.resources {
-		r.Close()
+	for i, r := range p.resources {
+		if r != nil {
+			r.Close()
+			p.resources[i] = nil // Remove resource from memory tracking
+		}
 	}
-	p.resources = nil
 
 	p.listenHandler = nil
 }
@@ -143,8 +147,20 @@ func (p *Numpool) Closed() bool {
 	return p.listenHandler == nil
 }
 
+type acquireOptions struct {
+	waiterID string
+}
+
+type AcquireOption func(*acquireOptions)
+
+func WithWaiterID(waiterID string) AcquireOption {
+	return func(opts *acquireOptions) {
+		opts.waiterID = waiterID
+	}
+}
+
 // Acquire acquires a resource from the pool.
-func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
+func (p *Numpool) Acquire(ctx context.Context, opts ...AcquireOption) (*Resource, error) {
 	if p.Closed() {
 		return nil, fmt.Errorf("cannot acquire resource from closed pool %s", p.id)
 	}
@@ -183,31 +199,36 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 		// The database transaction ensures acquisition atomicity, and the mutex
 		// ensures tracking atomicity. We only track successfully acquired resources.
 		p.mu.Lock()
-		resource := &Resource{
+		p.resources[resourceIndex] = &Resource{
 			pool:  p,
 			index: resourceIndex,
 		}
-		p.resources = append(p.resources, resource)
 		p.mu.Unlock()
-		return resource, nil
+		return p.resources[resourceIndex], nil
 	}
 
 	if !p.Listening() {
 		return nil, fmt.Errorf("listener is not running, cannot acquire resource")
 	}
 
-	waiterID := uuid.NewString()
+	var options acquireOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	if options.waiterID == "" {
+		options.waiterID = uuid.NewString()
+	}
 
 	err = queries.EnqueueWaitingClient(ctx, sqlc.EnqueueWaitingClientParams{
 		ID:       p.id,
-		WaiterID: waiterID,
+		WaiterID: options.waiterID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to enqueue waiting client: %w", err)
 	}
 
 	err = waitqueue.Wait(ctx, p.listenHandler,
-		waitqueue.WithID(waiterID),
+		waitqueue.WithID(options.waiterID),
 		waitqueue.WithAfterRegister(func() error {
 			// When we start waiting, commit the transaction and release the lock.
 			// This allows other clients to acquire the lock and potentially notify us.
@@ -220,7 +241,7 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 	if err != nil {
 		// Remove the client from the wait queue if we failed to wait.
 		// We use a new background context here because the original context might be cancelled.
-		if cleanupErr := p.removeFromWaitQueue(context.Background(), waiterID); cleanupErr != nil {
+		if cleanupErr := p.removeFromWaitQueue(context.Background(), options.waiterID); cleanupErr != nil {
 			// Log the cleanup error but don't fail the operation
 			_ = cleanupErr // TODO: Add proper logging when available
 		}
@@ -228,7 +249,7 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 	}
 
 	// At this point, we are the first in the wait queue.
-	return p.acquireAsFirstInQueue(ctx, waiterID)
+	return p.acquireAsFirstInQueue(ctx, options.waiterID)
 }
 
 // WithLock runs a function exclusively across all numpool instances with
@@ -324,13 +345,12 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 	// Track resource in memory after successful database acquisition.
 	// Same pattern as above - database transaction ensures acquisition atomicity.
 	p.mu.Lock()
-	resource := &Resource{
+	p.resources[resourceIndex] = &Resource{
 		pool:  p,
 		index: resourceIndex,
 	}
-	p.resources = append(p.resources, resource)
 	p.mu.Unlock()
-	return resource, nil
+	return p.resources[resourceIndex], nil
 }
 
 // release releases a resource back to the pool.
@@ -344,17 +364,16 @@ func (p *Numpool) release(ctx context.Context, r *Resource) error {
 			return fmt.Errorf("failed to get numpool with lock: %w", err)
 		}
 
-		affected, err := q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
+		_, err = q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
 			ID:            p.id,
 			ResourceIndex: r.index,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to release resource: %w", err)
 		}
-		if affected == 0 {
-			// Resource was already released - this is idempotent and should not be an error
-			return nil
-		}
+		// No need to lock the mutex here since we lock numpool for update
+		// and we are the only one releasing resources at this point.
+		p.resources[r.index] = nil // Remove resource from memory tracking
 
 		if len(model.WaitQueue) == 0 {
 			// No waiters, nothing to notify
