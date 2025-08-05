@@ -316,26 +316,6 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 			return fmt.Errorf("failed to acquire resource, something went wrong")
 		}
 
-		// CRITICAL FIX: After acquiring a resource, check if there are still waiters
-		// and available resources. If so, notify the next waiter to prevent deadlock.
-		// This fixes the chain notification bug where waiters get stuck when resources
-		// are available but no release events trigger notifications.
-		updatedModel, err := queries.GetNumpoolForUpdate(ctx, p.id)
-		if err != nil {
-			return fmt.Errorf("failed to get updated model: %w", err)
-		}
-
-		// If there are still waiters and available resources, notify the next waiter
-		if len(updatedModel.WaitQueue) > 0 && updatedModel.FindUnusedResourceIndex() != -1 {
-			err = queries.NotifyWaiters(ctx, sqlc.NotifyWaitersParams{
-				ChannelName: p.channelName(),
-				WaiterID:    updatedModel.WaitQueue[0],
-			})
-			if err != nil {
-				return fmt.Errorf("failed to notify next waiter: %w", err)
-			}
-		}
-
 		return nil
 	})
 

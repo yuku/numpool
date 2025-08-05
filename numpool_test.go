@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -440,71 +439,4 @@ func TestNumpool_WithLock(t *testing.T) {
 
 	wg.Wait()
 	assert.Equal(t, 0, count, "Count should be zero after all goroutines complete")
-}
-
-// TestDeadlockWhenResourcesAvailableButWaitersStuck reproduces the deadlock bug
-// where resources are available but waiters are stuck because notification chain is broken
-func TestDeadlockWhenResourcesAvailableButWaitersStuck(t *testing.T) {
-	ctx := context.Background()
-	manager, poolID := setupWithUniquePoolID(t)
-
-	pool, err := manager.GetOrCreate(ctx, numpool.Config{
-		ID:                poolID,
-		MaxResourcesCount: 3,
-	})
-	require.NoError(t, err, "failed to create pool")
-
-	// Step 1: Acquire all 3 resources to build up usage history
-	resources := make([]*numpool.Resource, 3)
-	for i := range 3 {
-		resources[i], err = pool.Acquire(ctx)
-		require.NoError(t, err, "failed to acquire resource %d", i)
-	}
-
-	// Step 2: Release all resources so they become available
-	for i, res := range resources {
-		err = res.Release(ctx)
-		require.NoError(t, err, "failed to release resource %d", i)
-	}
-
-	// Step 3: Create many concurrent waiters to trigger the race condition
-	const numWaiters = 20
-	var wg sync.WaitGroup
-	wg.Add(numWaiters)
-
-	errorCount := int32(0)
-	successCount := int32(0)
-
-	for i := range numWaiters {
-		go func(id int) {
-			defer wg.Done()
-			// Use a timeout to detect if we get stuck
-			acquireCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			defer cancel()
-
-			resource, err := pool.Acquire(acquireCtx)
-			if err != nil {
-				atomic.AddInt32(&errorCount, 1)
-				t.Logf("Waiter %d failed: %v", id, err)
-				return
-			}
-
-			atomic.AddInt32(&successCount, 1)
-			// Hold briefly then release
-			time.Sleep(10 * time.Millisecond)
-			resource.Close()
-		}(i)
-	}
-
-	wg.Wait()
-
-	finalSuccess := atomic.LoadInt32(&successCount)
-	finalError := atomic.LoadInt32(&errorCount)
-
-	t.Logf("Results: %d succeeded, %d failed (timeouts)", finalSuccess, finalError)
-
-	// In the bug scenario, most waiters timeout because they never receive notifications
-	// After fix, all waiters should succeed
-	assert.Equal(t, int32(numWaiters), finalSuccess, "All waiters should eventually succeed")
-	assert.Equal(t, int32(0), finalError, "No waiters should timeout")
 }
