@@ -72,7 +72,9 @@ func (p *Numpool) Listen(ctx context.Context) error {
 			config := p.manager.pool.Config().ConnConfig.Copy()
 			return pgx.ConnectConfig(ctx, config)
 		},
-		// Disable automatic reconnection to avoid blocking indefinitely
+		// Disable automatic reconnection to avoid blocking indefinitely.
+		// According to pgxlisten.Listener, setting ReconnectDelay to -1 disables
+		// automatic reconnection.
 		ReconnectDelay: -1,
 	}
 
@@ -122,13 +124,12 @@ func (p *Numpool) Close() {
 		p.cancelListen = nil
 	}
 
-	for i, r := range p.resources {
+	for _, r := range p.resources {
 		if r != nil {
 			r.Close()
-			p.resources[i] = nil // Remove resource from memory tracking
 		}
 	}
-
+	p.resources = nil
 	p.listenHandler = nil
 }
 
