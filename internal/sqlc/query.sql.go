@@ -42,33 +42,6 @@ func (q *Queries) AcquireResource(ctx context.Context, arg AcquireResourceParams
 	return result.RowsAffected(), nil
 }
 
-const acquireResourceAndDequeueFirstWaiter = `-- name: AcquireResourceAndDequeueFirstWaiter :execrows
-UPDATE numpools
-SET
-  resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - $2::INTEGER)),
-  wait_queue = wait_queue[2:]
-WHERE id = $1
-  AND (resource_usage_status & (1::BIT(64) << (63 - $2))) = 0::BIT(64)
-  AND cardinality(wait_queue) > 0
-  AND wait_queue[1] = $3::VARCHAR(100)
-`
-
-type AcquireResourceAndDequeueFirstWaiterParams struct {
-	ID            string
-	ResourceIndex int32
-	WaiterID      string
-}
-
-// AcquireResourceAndDequeueFirstWaiter attempts to acquire a resource and dequeue the first client
-// from the wait queue if successful.
-func (q *Queries) AcquireResourceAndDequeueFirstWaiter(ctx context.Context, arg AcquireResourceAndDequeueFirstWaiterParams) (int64, error) {
-	result, err := q.db.Exec(ctx, acquireResourceAndDequeueFirstWaiter, arg.ID, arg.ResourceIndex, arg.WaiterID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const checkNumpoolExists = `-- name: CheckNumpoolExists :one
 SELECT EXISTS (
     SELECT 1
@@ -229,6 +202,33 @@ LOCK TABLE numpools IN SHARE ROW EXCLUSIVE MODE
 
 func (q *Queries) LockNumpoolTableInShareMode(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, lockNumpoolTableInShareMode)
+	return err
+}
+
+const notifyAndDequeueFirstWaiter = `-- name: NotifyAndDequeueFirstWaiter :exec
+WITH first_waiter AS (
+  SELECT wait_queue[1] as waiter_id FROM numpools WHERE numpools.id = $1 AND cardinality(wait_queue) > 0
+),
+updated AS (
+  UPDATE numpools
+  SET wait_queue = wait_queue[2:]
+  WHERE numpools.id = $1 AND cardinality(wait_queue) > 0
+  RETURNING true
+)
+SELECT pg_notify($2, first_waiter.waiter_id)
+FROM first_waiter, updated
+WHERE first_waiter.waiter_id IS NOT NULL
+`
+
+type NotifyAndDequeueFirstWaiterParams struct {
+	ID          string
+	ChannelName string
+}
+
+// NotifyAndDequeueFirstWaiter atomically dequeues the first waiter and notifies them.
+// This prevents the race condition where multiple releases notify the same waiter.
+func (q *Queries) NotifyAndDequeueFirstWaiter(ctx context.Context, arg NotifyAndDequeueFirstWaiterParams) error {
+	_, err := q.db.Exec(ctx, notifyAndDequeueFirstWaiter, arg.ID, arg.ChannelName)
 	return err
 }
 
