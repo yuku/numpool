@@ -49,7 +49,7 @@ jobs:
         go-version-file: go.mod
 
     - name: Run main tests
-      run: go test -json -race -timeout 30s ./... | go tool tparse -all
+      run: go test -json -race -timeout 30s ./... | go run github.com/mfridman/tparse@v0.17.0 -all
 
   golangci:
     name: Lint
