@@ -59,18 +59,6 @@ UPDATE numpools
 SET wait_queue = array_append(wait_queue, @waiter_id::VARCHAR(100))
 WHERE id = $1;
 
--- name: AcquireResourceAndDequeueFirstWaiter :execrows
--- AcquireResourceAndDequeueFirstWaiter attempts to acquire a resource and dequeue the first client
--- from the wait queue if successful.
-UPDATE numpools
-SET
-  resource_usage_status = resource_usage_status | (1::BIT(64) << (63 - @resource_index::INTEGER)),
-  wait_queue = wait_queue[2:]
-WHERE id = $1
-  AND (resource_usage_status & (1::BIT(64) << (63 - @resource_index))) = 0::BIT(64)
-  AND cardinality(wait_queue) > 0
-  AND wait_queue[1] = @waiter_id::VARCHAR(100);
-
 -- name: RemoveFromWaitQueue :exec
 -- RemoveFromWaitQueue removes a specific waiter UUID from the wait queue.
 UPDATE numpools
@@ -79,6 +67,22 @@ WHERE id = $1;
 
 -- name: NotifyWaiters :exec
 SELECT pg_notify(@channel_name, @waiter_id);
+
+-- name: NotifyAndDequeueFirstWaiter :exec
+-- NotifyAndDequeueFirstWaiter atomically dequeues the first waiter and notifies them.
+-- This prevents the race condition where multiple releases notify the same waiter.
+WITH first_waiter AS (
+  SELECT wait_queue[1] as waiter_id FROM numpools WHERE numpools.id = $1 AND cardinality(wait_queue) > 0
+),
+updated AS (
+  UPDATE numpools
+  SET wait_queue = wait_queue[2:]
+  WHERE numpools.id = $1 AND cardinality(wait_queue) > 0
+  RETURNING true
+)
+SELECT pg_notify(@channel_name, first_waiter.waiter_id)
+FROM first_waiter, updated
+WHERE first_waiter.waiter_id IS NOT NULL;
 
 -- name: LockNumpoolTableInShareMode :exec
 LOCK TABLE numpools IN SHARE ROW EXCLUSIVE MODE;

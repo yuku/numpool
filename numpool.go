@@ -72,6 +72,10 @@ func (p *Numpool) Listen(ctx context.Context) error {
 			config := p.manager.pool.Config().ConnConfig.Copy()
 			return pgx.ConnectConfig(ctx, config)
 		},
+		// Disable automatic reconnection to avoid blocking indefinitely.
+		// According to pgxlisten.Listener, setting ReconnectDelay to -1 disables
+		// automatic reconnection.
+		ReconnectDelay: -1,
 	}
 
 	// Check if already closed before setting up listener
@@ -121,10 +125,11 @@ func (p *Numpool) Close() {
 	}
 
 	for _, r := range p.resources {
-		r.Close()
+		if r != nil {
+			r.Close()
+		}
 	}
 	p.resources = nil
-
 	p.listenHandler = nil
 }
 
@@ -143,8 +148,20 @@ func (p *Numpool) Closed() bool {
 	return p.listenHandler == nil
 }
 
+type acquireOptions struct {
+	waiterID string
+}
+
+type AcquireOption func(*acquireOptions)
+
+func WithWaiterID(waiterID string) AcquireOption {
+	return func(opts *acquireOptions) {
+		opts.waiterID = waiterID
+	}
+}
+
 // Acquire acquires a resource from the pool.
-func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
+func (p *Numpool) Acquire(ctx context.Context, opts ...AcquireOption) (*Resource, error) {
 	if p.Closed() {
 		return nil, fmt.Errorf("cannot acquire resource from closed pool %s", p.id)
 	}
@@ -163,8 +180,8 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 		return nil, fmt.Errorf("failed to get numpool with lock: %w", err)
 	}
 
-	if resourceIndex := model.FindUnusedResourceIndex(); resourceIndex != -1 {
-		// We can acquire a resource immediately
+	if resourceIndex := model.FindUnusedResourceIndex(); resourceIndex != -1 && len(model.WaitQueue) == 0 {
+		// We can acquire a resource immediately only if no one is waiting
 		affected, err := queries.AcquireResource(ctx, sqlc.AcquireResourceParams{
 			ID:            p.id,
 			ResourceIndex: resourceIndex,
@@ -183,31 +200,36 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 		// The database transaction ensures acquisition atomicity, and the mutex
 		// ensures tracking atomicity. We only track successfully acquired resources.
 		p.mu.Lock()
-		resource := &Resource{
+		p.resources[resourceIndex] = &Resource{
 			pool:  p,
 			index: resourceIndex,
 		}
-		p.resources = append(p.resources, resource)
 		p.mu.Unlock()
-		return resource, nil
+		return p.resources[resourceIndex], nil
 	}
 
 	if !p.Listening() {
 		return nil, fmt.Errorf("listener is not running, cannot acquire resource")
 	}
 
-	waiterID := uuid.NewString()
+	var options acquireOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	if options.waiterID == "" {
+		options.waiterID = uuid.NewString()
+	}
 
 	err = queries.EnqueueWaitingClient(ctx, sqlc.EnqueueWaitingClientParams{
 		ID:       p.id,
-		WaiterID: waiterID,
+		WaiterID: options.waiterID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to enqueue waiting client: %w", err)
 	}
 
 	err = waitqueue.Wait(ctx, p.listenHandler,
-		waitqueue.WithID(waiterID),
+		waitqueue.WithID(options.waiterID),
 		waitqueue.WithAfterRegister(func() error {
 			// When we start waiting, commit the transaction and release the lock.
 			// This allows other clients to acquire the lock and potentially notify us.
@@ -220,14 +242,15 @@ func (p *Numpool) Acquire(ctx context.Context) (*Resource, error) {
 	if err != nil {
 		// Remove the client from the wait queue if we failed to wait.
 		// We use a new background context here because the original context might be cancelled.
-		if err := p.removeFromWaitQueue(context.Background(), waiterID); err != nil {
-			return nil, fmt.Errorf("failed to remove client from wait queue: %w", err)
+		if cleanupErr := p.removeFromWaitQueue(context.Background(), options.waiterID); cleanupErr != nil {
+			// Log the cleanup error but don't fail the operation
+			_ = cleanupErr // TODO: Add proper logging when available
 		}
 		return nil, fmt.Errorf("failed to wait for resource: %w", err)
 	}
 
 	// At this point, we are the first in the wait queue.
-	return p.acquireAsFirstInQueue(ctx, waiterID)
+	return p.acquireAsFirstInQueue(ctx)
 }
 
 // WithLock runs a function exclusively across all numpool instances with
@@ -255,7 +278,7 @@ func (p *Numpool) removeFromWaitQueue(ctx context.Context, waiterID string) erro
 	})
 }
 
-func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*Resource, error) {
+func (p *Numpool) acquireAsFirstInQueue(ctx context.Context) (*Resource, error) {
 	var resourceIndex int
 
 	err := pgx.BeginFunc(ctx, p.manager.pool, func(tx pgx.Tx) error {
@@ -267,31 +290,24 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 			return fmt.Errorf("failed to get numpool with lock: %w", err)
 		}
 
-		// Check if we are the first in the wait queue and if there are unused resources.
-		// Should never happen if we are using the wait queue correctly.
-		if len(model.WaitQueue) == 0 {
-			return fmt.Errorf("expected to be first in the wait queue, but no waiters found")
-		}
-		if model.WaitQueue[0] != waiterID {
-			return fmt.Errorf("not the first in the wait queue: expected %s, got %s", model.WaitQueue[0], waiterID)
-		}
+		// Since NotifyAndDequeueFirstWaiter already dequeued this waiter,
+		// we just need to find an available resource and acquire it.
 		resourceIndex = model.FindUnusedResourceIndex()
 		if resourceIndex == -1 {
 			return fmt.Errorf("no unused resources available")
 		}
 
-		affected, err := queries.AcquireResourceAndDequeueFirstWaiter(ctx, sqlc.AcquireResourceAndDequeueFirstWaiterParams{
+		affected, err := queries.AcquireResource(ctx, sqlc.AcquireResourceParams{
 			ID:            p.id,
-			WaiterID:      waiterID,
-			ResourceIndex: int32(resourceIndex),
+			ResourceIndex: resourceIndex,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to acquire resource and dequeue first waiter: %w", err)
+			return fmt.Errorf("failed to acquire resource: %w", err)
 		}
 		if affected == 0 {
-			// This should not happen with proper locking
-			return fmt.Errorf("failed to acquire resource, something went wrong")
+			return fmt.Errorf("failed to acquire resource, it might be in use by another transaction")
 		}
+
 		return nil
 	})
 
@@ -302,13 +318,12 @@ func (p *Numpool) acquireAsFirstInQueue(ctx context.Context, waiterID string) (*
 	// Track resource in memory after successful database acquisition.
 	// Same pattern as above - database transaction ensures acquisition atomicity.
 	p.mu.Lock()
-	resource := &Resource{
+	p.resources[resourceIndex] = &Resource{
 		pool:  p,
 		index: resourceIndex,
 	}
-	p.resources = append(p.resources, resource)
 	p.mu.Unlock()
-	return resource, nil
+	return p.resources[resourceIndex], nil
 }
 
 // release releases a resource back to the pool.
@@ -322,29 +337,29 @@ func (p *Numpool) release(ctx context.Context, r *Resource) error {
 			return fmt.Errorf("failed to get numpool with lock: %w", err)
 		}
 
-		affected, err := q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
+		_, err = q.ReleaseResource(ctx, sqlc.ReleaseResourceParams{
 			ID:            p.id,
 			ResourceIndex: r.index,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to release resource: %w", err)
 		}
-		if affected == 0 {
-			return fmt.Errorf("resource was not in use")
-		}
+		// No need to lock the mutex here since we lock numpool for update
+		// and we are the only one releasing resources at this point.
+		p.resources[r.index] = nil // Remove resource from memory tracking
 
 		if len(model.WaitQueue) == 0 {
 			// No waiters, nothing to notify
 			return nil
 		}
 
-		// Notify the first waiter in the queue
-		err = q.NotifyWaiters(ctx, sqlc.NotifyWaitersParams{
+		// Atomically notify and dequeue the first waiter to prevent race conditions
+		err = q.NotifyAndDequeueFirstWaiter(ctx, sqlc.NotifyAndDequeueFirstWaiterParams{
+			ID:          p.id,
 			ChannelName: p.channelName(),
-			WaiterID:    model.WaitQueue[0],
 		})
 		if err != nil {
-			return fmt.Errorf("failed to notify waiting client: %w", err)
+			return fmt.Errorf("failed to notify and dequeue waiting client: %w", err)
 		}
 
 		return nil

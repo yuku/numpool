@@ -134,6 +134,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, conf Config) (*Numpool, error
 		id:            conf.ID,
 		metadata:      metadata,
 		manager:       m,
+		resources:     make([]*Resource, conf.MaxResourcesCount),
 		listenHandler: &waitqueue.ListenHandler{},
 	}
 
